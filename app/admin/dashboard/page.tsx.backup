@@ -1,0 +1,2968 @@
+"use client"
+
+import { useState, useEffect, Suspense } from "react"
+import { useSearchParams, useRouter } from "next/navigation"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
+import { toast } from "@/hooks/use-toast"
+import {
+  Users, BookOpen, Plus, Edit, Trash2, Search, Settings,
+  Monitor, FileText, Eye, Server, Router, Wifi, Globe,
+  HardDrive, Laptop, Network, Save, X, Check, AlertCircle, Star, LogOut, Upload
+} from "lucide-react"
+import Image from "next/image"
+import { supabase } from "@/lib/supabase"
+import Sidebar from "@/components/sidebar"
+import { getUsers, createUser, updateUser, deleteUser, User } from "./services/users"
+import { getCourses, createCourse, updateCourse, deleteCourse, Course } from "./services/courses"
+import { getLessons, createLesson, updateLesson, deleteLesson, Lesson } from "./services/lessons"
+import { getLabs, createLab, updateLab, deleteLab, Lab } from "./services/labs"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { 
+  addLabDevice, updateLabDevice, deleteLabDevice, 
+  addLabQuestion, updateLabQuestion, deleteLabQuestion,
+  addLabQuestionHint, updateLabQuestionHint, deleteLabQuestionHint,
+  LabDevice, LabQuestion, LabQuestionHint, DEVICE_TYPES, DeviceType, createNewDevice, createNewQuestion
+} from "./services/labs"
+
+interface AdminUser {
+  id: string
+  name: string
+  email: string
+  role: string
+}
+
+type UserRole = "طالب" | "مدرب" | "مسؤول"
+
+type CourseLevel = "مبتدئ" | "متوسط" | "متقدم"
+
+type LabDifficulty = "مبتدئ" | "متوسط" | "متقدم"
+
+// إضافة نوع Admin
+interface Admin {
+  id: string
+  name: string
+  email: string
+  avatar_url?: string
+}
+
+export default function AdminDashboard() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'dashboard')
+  const [adminUser, setAdminUser] = useState<AdminUser | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  // State for data
+  const [users, setUsers] = useState<User[]>([])
+  const [courses, setCourses] = useState<Course[]>([])
+  const [labs, setLabs] = useState<Lab[]>([])
+  const [lessons, setLessons] = useState<Lesson[]>([])
+
+  // State for forms
+  const [newUser, setNewUser] = useState<{ name: string; email: string; role: UserRole; avatar_url?: string }>({ name: "", email: "", role: "طالب" })
+  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [newCourse, setNewCourse] = useState<{ title: string; description: string; level: CourseLevel }>({ title: "", description: "", level: "مبتدئ" })
+  const [editingCourse, setEditingCourse] = useState<Course | null>(null)
+  const [newLab, setNewLab] = useState<{ title: string; description: string; instructions: string; course_id: number; difficulty: LabDifficulty }>({ title: "", description: "", instructions: "", course_id: 0, difficulty: "مبتدئ" })
+  const [editingLab, setEditingLab] = useState<Lab | null>(null)
+  const [newLesson, setNewLesson] = useState({
+    title: "",
+    course_id: 0,
+    duration: "",
+    lesson_order: 1,
+    content: "",
+    description: "",
+    status: "مسودة" as 'منشور' | 'مسودة',
+    materials: [] as { name: string; url: string }[]
+  })
+  const [editingLesson, setEditingLesson] = useState<Lesson | null>(null)
+  const [courseImageFile, setCourseImageFile] = useState<File | null>(null)
+  const [editingCourseImageFile, setEditingCourseImageFile] = useState<File | null>(null)
+
+  // Dialog states
+  const [userDialogOpen, setUserDialogOpen] = useState(false)
+  const [courseDialogOpen, setCourseDialogOpen] = useState(false)
+  const [labDialogOpen, setLabDialogOpen] = useState(false)
+  const [lessonDialogOpen, setLessonDialogOpen] = useState(false)
+
+  // Search and filter states
+  const [userSearch, setUserSearch] = useState("")
+  const [courseSearch, setCourseSearch] = useState("")
+  const [lessonSearch, setLessonSearch] = useState("")
+  const [labSearch, setLabSearch] = useState("")
+  const [courseFilter, setCourseFilter] = useState("")
+  const [statusFilter, setStatusFilter] = useState("")
+
+  // Add state for lab devices and questions
+  const [labDevices, setLabDevices] = useState<LabDevice[]>([])
+  const [labQuestions, setLabQuestions] = useState<LabQuestion[]>([])
+  const [selectedLab, setSelectedLab] = useState<Lab | null>(null)
+
+  // State for new device
+  const [newDevice, setNewDevice] = useState<{
+    name: string;
+    type: DeviceType;
+    ip: string;
+    url: string;
+    lab_id: number;
+  }>({
+    name: "",
+    type: "server",
+    ip: "",
+    url: "",
+    lab_id: 0
+  })
+
+  // State for new question
+  const [newQuestion, setNewQuestion] = useState({
+    question: "",
+    correct_answer: "",
+    explanation: "",
+    lab_id: 0,
+    hints: [] as string[]
+  })
+
+  // State for editing
+  const [editingDevice, setEditingDevice] = useState<LabDevice | null>(null)
+  const [editingQuestion, setEditingQuestion] = useState<LabQuestion | null>(null)
+
+  // Dialog states
+  const [deviceDialogOpen, setDeviceDialogOpen] = useState(false)
+  const [questionDialogOpen, setQuestionDialogOpen] = useState(false)
+  const [labDetailsDialogOpen, setLabDetailsDialogOpen] = useState(false)
+
+  // State for editing hints
+  const [editingHints, setEditingHints] = useState<string[]>([])
+
+  // إضافة حالة لتخزين بيانات المسؤولين
+  const [admins, setAdmins] = useState<Admin[]>([])
+
+  // جلب بيانات المسؤولين عند تحميل الدروس
+  useEffect(() => {
+    const fetchAdmins = async () => {
+      // اجمع كل admin_id من الدروس
+      const adminIds = Array.from(new Set(lessons.map(l => l.admin_id).filter(Boolean)))
+      if (adminIds.length === 0) return
+      // جلب بيانات المسؤولين دفعة واحدة
+      const { data, error } = await supabase
+        .from('admins')
+        .select('id, name, email, avatar_url')
+        .in('id', adminIds)
+      if (!error && data) setAdmins(data)
+    }
+    fetchAdmins()
+  }, [lessons])
+
+  // دالة مساعدة لجلب بيانات المسؤول من القائمة
+  const getAdminById = (id: string) => admins.find(a => a.id === id)
+
+  // Update activeTab based on URL query parameter
+  useEffect(() => {
+    const tab = searchParams.get('tab')
+    if (tab && ['dashboard', 'users', 'courses', 'lessons', 'labs'].includes(tab)) {
+      setActiveTab(tab)
+    }
+  }, [searchParams])
+
+  // Handle tab change and update URL
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab)
+    const url = new URL(window.location.href)
+    url.searchParams.set('tab', tab)
+    window.history.pushState({}, '', url.toString())
+  }
+
+  // Fetch data on component mount
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        setLoading(true)
+        
+        // جلب البيانات من قاعدة البيانات
+        const [usersData, coursesData, lessonsData, labsData] = await Promise.all([
+          getUsers(),
+          getCourses(),
+          getLessons(),
+          getLabs()
+        ])
+        
+        setUsers(usersData)
+        setCourses(coursesData)
+        setLessons(lessonsData)
+        setLabs(labsData)
+        
+        console.log('Data loaded successfully:', {
+          users: usersData.length,
+          courses: coursesData.length,
+          lessons: lessonsData.length,
+          labs: labsData.length
+        })
+      } catch (error: any) {
+        console.error('Error fetching data:', error)
+        toast({ 
+          title: "خطأ", 
+          description: error.message || "حدث خطأ أثناء جلب البيانات", 
+          variant: "destructive" 
+        })
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [])
+
+  // Fetch admin user data on component mount
+  useEffect(() => {
+    const fetchAdminUser = async () => {
+      try {
+        const { data: { user } } = await supabase.auth.getUser()
+        console.log('Supabase user:', user)
+        if (!user) {
+          router.push('/admin/login')
+          return
+        }
+        // جلب بيانات المستخدم من جدول users
+        const { data: userData, error } = await supabase
+          .from('users')
+          .select('id, name, email, role')
+          .eq('id', user.id)
+          .single()
+        console.log('Fetched userData:', userData, 'error:', error)
+        if (error || !userData) {
+          await supabase.auth.signOut()
+          router.push('/admin/login')
+          toast({
+            title: "خطأ في الوصول",
+            description: "المستخدم غير موجود في قاعدة البيانات",
+            variant: "destructive",
+          })
+          return
+        }
+        if (userData.role !== 'مسؤول') {
+          await supabase.auth.signOut()
+          router.push('/admin/login')
+          toast({
+            title: "غير مصرح بالوصول",
+            description: "ليس لديك صلاحيات المسؤول",
+            variant: "destructive",
+          })
+          return
+        }
+        setAdminUser(userData)
+        console.log('Set adminUser:', userData)
+      } catch (error) {
+        console.error('Error fetching admin user:', error)
+        await supabase.auth.signOut()
+        router.push('/admin/login')
+        toast({
+          title: "خطأ في الوصول",
+          description: "حدث خطأ أثناء التحقق من صلاحياتك",
+          variant: "destructive",
+        })
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchAdminUser()
+  }, [router])
+
+  // Filtered data based on search
+  const filteredUsers = users.filter(user =>
+    user.name.toLowerCase().includes(userSearch.toLowerCase()) ||
+    user.email.toLowerCase().includes(userSearch.toLowerCase()) ||
+    user.role.toLowerCase().includes(userSearch.toLowerCase())
+  )
+
+  const filteredCourses = courses.filter(course =>
+    course.title.toLowerCase().includes(courseSearch.toLowerCase()) ||
+    (course.description && course.description.toLowerCase().includes(courseSearch.toLowerCase())) ||
+    course.level.toLowerCase().includes(courseSearch.toLowerCase())
+  )
+
+  const filteredLessons = lessons.filter(
+    (lesson): lesson is Lesson => !!lesson && typeof lesson === 'object' && 'title' in lesson
+  ).filter(lesson =>
+    (lesson.title && lesson.title.toLowerCase().includes(lessonSearch.toLowerCase())) ||
+    (lesson.description && lesson.description.toLowerCase().includes(lessonSearch.toLowerCase())) ||
+    (lesson.status && lesson.status.toLowerCase().includes(lessonSearch.toLowerCase()))
+  )
+
+  const filteredLabs = labs.filter(lab =>
+    lab.title.toLowerCase().includes(labSearch.toLowerCase()) ||
+    (lab.description && lab.description.toLowerCase().includes(labSearch.toLowerCase())) ||
+    lab.difficulty.toLowerCase().includes(labSearch.toLowerCase()) ||
+    (courses.find(c => c.id === lab.course_id)?.title.toLowerCase().includes(labSearch.toLowerCase()) || false)
+  )
+
+  // User functions
+  const handleAddUser = async () => {
+    try {
+      if (!newUser.name || !newUser.email) {
+        throw new Error("يرجى ملء جميع الحقول المطلوبة")
+      }
+
+      const user = await createUser({
+        name: newUser.name,
+        email: newUser.email,
+        role: newUser.role,
+        status: "نشط",
+        join_date: new Date().toISOString().split('T')[0]
+      })
+
+      setUsers([...users, user])
+      setNewUser({ name: "", email: "", role: "طالب" })
+      setUserDialogOpen(false)
+      toast({
+        title: "تم بنجاح",
+        description: "تم إضافة المستخدم بنجاح",
+      })
+    } catch (error: any) {
+      toast({
+        title: "خطأ",
+        description: error.message || "حدث خطأ أثناء إضافة المستخدم",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleUpdateUser = async () => {
+    try {
+      if (!editingUser) return
+
+      const updatedUser = await updateUser(editingUser.id, editingUser)
+      setUsers(users.map(u => u.id === updatedUser.id ? updatedUser : u))
+      setEditingUser(null)
+      toast({
+        title: "تم بنجاح",
+        description: "تم تحديث بيانات المستخدم",
+      })
+    } catch (error: any) {
+      toast({
+        title: "خطأ",
+        description: error.message || "حدث خطأ أثناء تحديث المستخدم",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleDeleteUser = async (id: string) => {
+    try {
+      await deleteUser(id)
+      setUsers(users.filter(u => u.id !== id))
+      toast({
+        title: "تم بنجاح",
+        description: "تم حذف المستخدم",
+      })
+    } catch (error: any) {
+      toast({
+        title: "خطأ",
+        description: error.message || "حدث خطأ أثناء حذف المستخدم",
+        variant: "destructive",
+      })
+    }
+  }
+
+  const handleToggleUserStatus = async (id: string, currentStatus: 'نشط' | 'معطل') => {
+    try {
+      const newStatus = currentStatus === 'نشط' ? 'معطل' : 'نشط'
+      const updatedUser = await updateUser(id, { status: newStatus })
+      setUsers(users.map(u => u.id === id ? updatedUser : u))
+      toast({
+        title: "تم بنجاح",
+        description: `تم ${newStatus === 'نشط' ? 'تفعيل' : 'إيقاف'} المستخدم`,
+      })
+    } catch (error: any) {
+      toast({
+        title: "خطأ",
+        description: error.message || "حدث خطأ أثناء تغيير حالة المستخدم",
+        variant: "destructive",
+      })
+    }
+  }
+
+  // Course functions
+  const handleAddCourse = async () => {
+    try {
+      if (!newCourse.title) throw new Error("يرجى إدخال عنوان المسار")
+      
+      let imageUrl = ''
+      
+      // رفع الصورة إذا تم اختيارها
+      if (courseImageFile) {
+        try {
+          // التحقق من نوع الملف
+          const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/bmp', 'image/tiff']
+          if (!allowedTypes.includes(courseImageFile.type)) {
+            throw new Error(`نوع الملف ${courseImageFile.type} غير مدعوم. الأنواع المدعومة: JPG, PNG, GIF, WebP, SVG, BMP, TIFF`)
+          }
+          
+          // محاولة رفع الصورة مباشرة
+          const fileExt = courseImageFile.name.split('.').pop()
+          const fileName = `course-${Date.now()}.${fileExt}`
+          
+          console.log('Attempting to upload file:', fileName, 'to bucket: course-images')
+          
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('course-images')
+            .upload(fileName, courseImageFile)
+          
+          if (uploadError) {
+            console.error('Upload error details:', {
+              message: uploadError.message,
+              name: uploadError.name
+            })
+            
+            // إذا كان الخطأ بسبب عدم وجود bucket
+            if (uploadError.message?.includes('bucket')) {
+              throw new Error('bucket صور المسارات غير موجود. يرجى تنفيذ ملف create_bucket_manually.sql في Supabase أولاً')
+            }
+            
+            // إذا كان الخطأ بسبب نوع الملف
+            if (uploadError.message?.includes('mime type')) {
+              throw new Error(`نوع الملف غير مدعوم. يرجى اختيار ملف بصيغة: JPG, PNG, GIF, WebP, SVG, BMP, TIFF`)
+            }
+            
+            throw new Error(`فشل في رفع الصورة: ${uploadError.message || 'خطأ غير معروف'}`)
+          }
+          
+          console.log('Upload successful:', uploadData)
+          
+          // الحصول على الرابط العام للصورة
+          const { data: urlData } = supabase.storage
+            .from('course-images')
+            .getPublicUrl(fileName)
+          
+          imageUrl = urlData.publicUrl
+          console.log('Public URL:', imageUrl)
+          
+        } catch (uploadError: any) {
+          console.error('Upload process error:', uploadError)
+          throw new Error(`خطأ في رفع الصورة: ${uploadError.message}`)
+        }
+      }
+      
+      const course = await createCourse({
+        title: newCourse.title,
+        description: newCourse.description,
+        level: newCourse.level,
+        status: "منشور",
+        students: 0,
+        price: 0,
+        duration: '',
+        rating: 0,
+        image: imageUrl
+      })
+      setCourses([...courses, course])
+      setNewCourse({ title: "", description: "", level: "مبتدئ" })
+      setCourseImageFile(null)
+      setCourseDialogOpen(false)
+      toast({ title: "تم بنجاح", description: "تم إضافة المسار بنجاح" })
+    } catch (error: any) {
+      console.error('handleAddCourse error:', error)
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء إضافة المسار", variant: "destructive" })
+    }
+  }
+
+  const handleUpdateCourse = async () => {
+    try {
+      if (!editingCourse) return
+      
+      let imageUrl = editingCourse.image || ''
+      
+      // رفع الصورة الجديدة إذا تم اختيارها
+      if (editingCourseImageFile) {
+        try {
+          // التحقق من نوع الملف
+          const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/bmp', 'image/tiff']
+          if (!allowedTypes.includes(editingCourseImageFile.type)) {
+            throw new Error(`نوع الملف ${editingCourseImageFile.type} غير مدعوم. الأنواع المدعومة: JPG, PNG, GIF, WebP, SVG, BMP, TIFF`)
+          }
+          
+          // محاولة رفع الصورة مباشرة
+          const fileExt = editingCourseImageFile.name.split('.').pop()
+          const fileName = `course-${Date.now()}.${fileExt}`
+          
+          console.log('Attempting to upload file:', fileName, 'to bucket: course-images')
+          
+          const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('course-images')
+            .upload(fileName, editingCourseImageFile)
+          
+          if (uploadError) {
+            console.error('Upload error details:', {
+              message: uploadError.message,
+              name: uploadError.name
+            })
+            
+            // إذا كان الخطأ بسبب عدم وجود bucket
+            if (uploadError.message?.includes('bucket')) {
+              throw new Error('bucket صور المسارات غير موجود. يرجى تنفيذ ملف create_bucket_manually.sql في Supabase أولاً')
+            }
+            
+            // إذا كان الخطأ بسبب نوع الملف
+            if (uploadError.message?.includes('mime type')) {
+              throw new Error(`نوع الملف غير مدعوم. يرجى اختيار ملف بصيغة: JPG, PNG, GIF, WebP, SVG, BMP, TIFF`)
+            }
+            
+            throw new Error(`فشل في رفع الصورة: ${uploadError.message || 'خطأ غير معروف'}`)
+          }
+          
+          console.log('Upload successful:', uploadData)
+          
+          // الحصول على الرابط العام للصورة
+          const { data: urlData } = supabase.storage
+            .from('course-images')
+            .getPublicUrl(fileName)
+          
+          imageUrl = urlData.publicUrl
+          console.log('Public URL:', imageUrl)
+          
+        } catch (uploadError: any) {
+          console.error('Upload process error:', uploadError)
+          throw new Error(`خطأ في رفع الصورة: ${uploadError.message}`)
+        }
+      }
+      
+      const updated = await updateCourse(editingCourse.id, { ...editingCourse, image: imageUrl })
+      setCourses(courses.map(c => c.id === updated.id ? updated : c))
+      setEditingCourse(null)
+      setEditingCourseImageFile(null)
+      toast({ title: "تم بنجاح", description: "تم تحديث بيانات المسار" })
+    } catch (error: any) {
+      console.error('handleUpdateCourse error:', error)
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء تحديث المسار", variant: "destructive" })
+    }
+  }
+
+  const handleDeleteCourse = async (id: number) => {
+    try {
+      await deleteCourse(id)
+      setCourses(courses.filter(c => c.id !== id))
+      toast({ title: "تم بنجاح", description: "تم حذف المسار" })
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء حذف المسار", variant: "destructive" })
+    }
+  }
+
+  // Lesson functions
+  const handleAddLesson = async () => {
+    try {
+      if (!newLesson.title || !newLesson.course_id || !newLesson.content) {
+        toast({ 
+          title: "خطأ", 
+          description: "يرجى ملء العنوان والمسار والمحتوى", 
+          variant: "destructive" 
+        })
+        return
+      }
+
+      const { data: userData } = await supabase.auth.getUser();
+      const { data: adminData } = await supabase
+        .from('admins')
+        .select('id')
+        .eq('user_id', userData?.user?.id)
+        .single();
+
+      const lessonData = {
+        title: newLesson.title,
+        course_id: newLesson.course_id,
+        content: newLesson.content,
+        status: newLesson.status,
+        lesson_order: newLesson.lesson_order,
+        admin_id: adminData?.id, // مهم جداً
+        description: newLesson.description || undefined,
+        duration: newLesson.duration || undefined,
+        materials: newLesson.materials.length > 0 ? newLesson.materials : undefined,
+        user_id: userData?.user?.id,
+      };
+
+      const { data, error } = await supabase.from('lessons').insert(lessonData).select()
+      if (error) throw error
+      if (data && data.length > 0) {
+        setLessons([...lessons, data[0]])
+      }
+      setNewLesson({ 
+        title: "", 
+        course_id: 0, 
+        duration: "", 
+        lesson_order: 1, 
+        content: "", 
+        description: "", 
+        status: "مسودة",
+        materials: []
+      })
+      setLessonDialogOpen(false)
+      toast({ title: "تم بنجاح", description: "تم إضافة الدرس بنجاح" })
+    } catch (error: any) {
+      let errorMessage = "حدث خطأ أثناء إضافة الدرس"
+      if (error.message) errorMessage = error.message
+      else if (error.details) errorMessage = error.details
+      else if (error.hint) errorMessage = error.hint
+      toast({ title: "خطأ", description: errorMessage, variant: "destructive" })
+    }
+  }
+
+  const handleUpdateLesson = async () => {
+    try {
+      if (!editingLesson) return
+      
+      if (!editingLesson.title || !editingLesson.course_id || !editingLesson.content) {
+        toast({ 
+          title: "خطأ", 
+          description: "يرجى ملء العنوان والمسار والمحتوى", 
+          variant: "destructive" 
+        })
+        return
+      }
+
+      const lessonData = {
+        title: editingLesson.title,
+        course_id: editingLesson.course_id,
+        duration: editingLesson.duration || undefined,
+        lesson_order: editingLesson.lesson_order,
+        content: editingLesson.content,
+        description: editingLesson.description || undefined,
+        status: editingLesson.status
+      }
+      
+      const updatedLesson = await updateLesson(editingLesson.id, lessonData)
+      setLessons(lessons.map(l => l.id === editingLesson.id ? updatedLesson : l))
+      setEditingLesson(null)
+      toast({ title: "تم بنجاح", description: "تم تحديث الدرس بنجاح" })
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء تحديث الدرس", variant: "destructive" })
+    }
+  }
+
+  const handleDeleteLesson = async (id: number) => {
+    try {
+      await deleteLesson(id)
+      setLessons(lessons.filter(l => l.id !== id))
+      toast({ title: "تم بنجاح", description: "تم حذف الدرس" })
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء حذف الدرس", variant: "destructive" })
+    }
+  }
+
+  // Lab functions
+  const handleAddLab = async () => {
+    try {
+      if (!newLab.title) throw new Error("يرجى إدخال عنوان المختبر")
+      if (!newLab.course_id || newLab.course_id === 0) throw new Error("يرجى اختيار المسار")
+      const lab = await createLab({
+        ...newLab,
+        status: "نشط"
+      })
+      setLabs([...labs, lab])
+      setNewLab({ title: "", description: "", instructions: "", course_id: 0, difficulty: "مبتدئ" })
+      setLabDialogOpen(false)
+      toast({ title: "تم بنجاح", description: "تم إضافة المختبر بنجاح" })
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء إضافة المختبر", variant: "destructive" })
+    }
+  }
+
+  const handleUpdateLab = async () => {
+    try {
+      if (!editingLab) return
+      if (!editingLab.course_id || editingLab.course_id === 0) throw new Error("يرجى اختيار المسار")
+      const updated = await updateLab(editingLab.id, editingLab)
+      setLabs(labs.map(l => l.id === updated.id ? updated : l))
+      setEditingLab(null)
+      toast({ title: "تم بنجاح", description: "تم تحديث بيانات المختبر" })
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء تحديث المختبر", variant: "destructive" })
+    }
+  }
+
+  const handleDeleteLab = async (id: number) => {
+    try {
+      await deleteLab(id)
+      setLabs(labs.filter(l => l.id !== id))
+      toast({ title: "تم بنجاح", description: "تم حذف المختبر" })
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء حذف المختبر", variant: "destructive" })
+    }
+  }
+
+  // Function to create required tables if they don't exist
+  const createRequiredTables = async () => {
+    try {
+      console.log('Checking and creating required tables...')
+      
+      // Create lab_devices table
+      const { error: devicesError } = await supabase.rpc('create_lab_devices_table', {})
+      if (devicesError && !devicesError.message.includes('already exists')) {
+        console.error('Error creating lab_devices table:', devicesError)
+      }
+      
+      // Create lab_questions table
+      const { error: questionsError } = await supabase.rpc('create_lab_questions_table', {})
+      if (questionsError && !questionsError.message.includes('already exists')) {
+        console.error('Error creating lab_questions table:', questionsError)
+      }
+      
+      // Create lab_question_hints table
+      const { error: hintsError } = await supabase.rpc('create_lab_question_hints_table', {})
+      if (hintsError && !hintsError.message.includes('already exists')) {
+        console.error('Error creating lab_question_hints table:', hintsError)
+      }
+      
+      // Create lesson_materials table
+      const { error: materialsError } = await supabase.rpc('create_lesson_materials_table', {})
+      if (materialsError && !materialsError.message.includes('already exists')) {
+        console.error('Error creating lesson_materials table:', materialsError)
+      }
+      
+      console.log('Tables check completed')
+    } catch (error) {
+      console.error('Error creating tables:', error)
+    }
+  }
+
+  // Enhanced Lab device functions
+  const handleAddDevice = async () => {
+    try {
+      console.log('Adding device:', newDevice)
+      console.log('Selected lab:', selectedLab)
+      
+      if (!newDevice.name || !selectedLab) {
+        toast({ title: "خطأ", description: "يرجى إدخال اسم الجهاز واختيار مختبر", variant: "destructive" })
+        return
+      }
+      
+      const deviceData = createNewDevice(newDevice.type, newDevice.name, newDevice.ip)
+      console.log('Created device data:', deviceData)
+      
+      // إنشاء ID فريد للجهاز
+      const deviceId = `device_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      
+      const deviceToAdd = {
+        id: deviceId,
+        name: deviceData.name,
+        type: deviceData.type,
+        color: deviceData.color,
+        x: deviceData.x,
+        y: deviceData.y,
+        ip: deviceData.ip,
+        url: newDevice.url || '',
+        lab_id: selectedLab.id
+      }
+      console.log('Device to add:', deviceToAdd)
+      
+      // Direct insert using Supabase
+      const { data: insertedDevice, error: insertError } = await supabase
+        .from('lab_devices')
+        .insert(deviceToAdd)
+        .select()
+        .single()
+      
+      if (insertError) {
+        console.error('Insert error:', insertError)
+        throw insertError
+      }
+      
+      console.log('Device inserted successfully:', insertedDevice)
+      
+      // Update the devices list immediately
+      setLabDevices(prev => [...prev, insertedDevice])
+      
+      // Reset form
+      setNewDevice({ name: "", type: "server", ip: "", url: "", lab_id: 0 })
+      setDeviceDialogOpen(false)
+      
+      toast({ title: "تم بنجاح", description: "تم إضافة الجهاز بنجاح" })
+    } catch (error: any) {
+      console.error('Error adding device:', error)
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      })
+      
+      let errorMessage = "حدث خطأ أثناء إضافة الجهاز"
+      
+      if (error.message) {
+        errorMessage = error.message
+      } else if (error.details) {
+        errorMessage = error.details
+      } else if (error.hint) {
+        errorMessage = error.hint
+      }
+      
+      toast({ title: "خطأ", description: errorMessage, variant: "destructive" })
+    }
+  }
+
+  const handleUpdateDevice = async () => {
+    try {
+      if (!editingDevice) return
+      
+      const updated = await updateLabDevice(editingDevice.id, editingDevice)
+      
+      // Update the devices list immediately
+      setLabDevices(prev => prev.map(d => d.id === updated.id ? updated : d))
+      
+      setEditingDevice(null)
+      toast({ title: "تم بنجاح", description: "تم تحديث بيانات الجهاز" })
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء تحديث الجهاز", variant: "destructive" })
+    }
+  }
+
+  const handleDeleteDevice = async (id: string) => {
+    try {
+      await deleteLabDevice(id)
+      
+      // Update the devices list immediately
+      setLabDevices(prev => prev.filter(d => d.id !== id))
+      
+      toast({ title: "تم بنجاح", description: "تم حذف الجهاز" })
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء حذف الجهاز", variant: "destructive" })
+    }
+  }
+
+  // Enhanced Lab question functions
+  const handleAddQuestion = async () => {
+    try {
+      console.log('Adding question:', newQuestion)
+      console.log('Selected lab:', selectedLab)
+      
+      if (!newQuestion.question || !selectedLab) {
+        toast({ title: "خطأ", description: "يرجى إدخال السؤال واختيار مختبر", variant: "destructive" })
+        return
+      }
+      
+      // إنشاء ID فريد للسؤال
+      const questionId = `question_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      
+      // Create question data
+      const questionData = {
+        id: questionId,
+        question: newQuestion.question,
+        correct_answer: newQuestion.correct_answer,
+        explanation: newQuestion.explanation || '', // إضافة قيمة افتراضية
+        lab_id: selectedLab.id
+      }
+      console.log('Question data to add:', questionData)
+      
+      // Direct insert using Supabase
+      const { data: insertedQuestion, error: insertError } = await supabase
+        .from('lab_questions')
+        .insert(questionData)
+        .select()
+        .single()
+      
+      if (insertError) {
+        console.error('Question insert error:', insertError)
+        throw insertError
+      }
+      
+      console.log('Question inserted successfully:', insertedQuestion)
+      
+      // Add hints if any
+      if (newQuestion.hints.length > 0) {
+        console.log('Adding hints:', newQuestion.hints)
+        const hintsPromises = newQuestion.hints.map(hintText => 
+          supabase
+            .from('lab_question_hints')
+            .insert({
+              question_id: insertedQuestion.id,
+              hint: hintText
+            })
+            .select()
+            .single()
+        )
+        
+        const hintsResults = await Promise.all(hintsPromises)
+        const hints = hintsResults.map(result => result.data).filter(Boolean)
+        console.log('Added hints:', hints)
+        
+        // Update question with hints
+        const questionWithHints = {
+          ...insertedQuestion,
+          hints: hints
+        }
+        
+        // Update the questions list immediately
+        setLabQuestions(prev => [...prev, questionWithHints])
+      } else {
+        // Update the questions list immediately
+        setLabQuestions(prev => [...prev, insertedQuestion])
+      }
+      
+      // Reset form
+      setNewQuestion({ question: "", correct_answer: "", explanation: "", lab_id: 0, hints: [] })
+      setQuestionDialogOpen(false)
+      
+      toast({ title: "تم بنجاح", description: "تم إضافة السؤال بنجاح" })
+    } catch (error: any) {
+      console.error('Error adding question:', error)
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      })
+      
+      let errorMessage = "حدث خطأ أثناء إضافة السؤال"
+      
+      if (error.message) {
+        errorMessage = error.message
+      } else if (error.details) {
+        errorMessage = error.details
+      } else if (error.hint) {
+        errorMessage = error.hint
+      }
+      
+      toast({ title: "خطأ", description: errorMessage, variant: "destructive" })
+    }
+  }
+
+  const handleUpdateQuestion = async () => {
+    try {
+      if (!editingQuestion) return
+      
+      const updated = await updateLabQuestion(editingQuestion.id, editingQuestion)
+      
+      // Update the questions list immediately
+      setLabQuestions(prev => prev.map(q => q.id === updated.id ? updated : q))
+      
+      setEditingQuestion(null)
+      toast({ title: "تم بنجاح", description: "تم تحديث بيانات السؤال" })
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء تحديث السؤال", variant: "destructive" })
+    }
+  }
+
+  const handleDeleteQuestion = async (id: string) => {
+    try {
+      await deleteLabQuestion(id)
+      
+      // Update the questions list immediately
+      setLabQuestions(prev => prev.filter(q => q.id !== id))
+      
+      toast({ title: "تم بنجاح", description: "تم حذف السؤال" })
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء حذف السؤال", variant: "destructive" })
+    }
+  }
+
+  // Lab publishing function
+  const handlePublishLab = async (lab: Lab) => {
+    try {
+      const newStatus = lab.status === "نشط" ? "قيد التطوير" : "نشط"
+      const updated = await updateLab(lab.id, { status: newStatus })
+      setLabs(labs.map(l => l.id === updated.id ? updated : l))
+      toast({ 
+        title: "تم بنجاح", 
+        description: `تم ${newStatus === "نشط" ? "نشر" : "إلغاء نشر"} المختبر بنجاح` 
+      })
+    } catch (error: any) {
+      toast({ title: "خطأ", description: error.message || "حدث خطأ أثناء تغيير حالة المختبر", variant: "destructive" })
+    }
+  }
+
+  // Enhanced load lab details function
+  const loadLabDetails = async (lab: Lab) => {
+    try {
+      console.log('Loading lab details for:', lab)
+      setSelectedLab(lab)
+      
+      // Load devices and questions for this lab
+      const { data: devices, error: devicesError } = await supabase
+        .from('lab_devices')
+        .select('*')
+        .eq('lab_id', lab.id)
+      
+      if (devicesError) {
+        console.error('Error loading devices:', devicesError)
+        throw devicesError
+      }
+      
+      const { data: questions, error: questionsError } = await supabase
+        .from('lab_questions')
+        .select('*, lab_question_hints(*)')
+        .eq('lab_id', lab.id)
+      
+      if (questionsError) {
+        console.error('Error loading questions:', questionsError)
+        throw questionsError
+      }
+      
+      console.log('Loaded devices:', devices)
+      console.log('Loaded questions:', questions)
+      
+      // Map devices with icons
+      const devicesWithIcons = (devices || []).map(device => ({
+        ...device,
+        icon: DEVICE_TYPES[device.type as DeviceType]?.icon || DEVICE_TYPES.server.icon
+      }))
+      
+      // Map questions with hints
+      const questionsWithHints = (questions || []).map(q => ({
+        ...q,
+        hints: q.lab_question_hints || []
+      }))
+      
+      setLabDevices(devicesWithIcons)
+      setLabQuestions(questionsWithHints)
+      
+      setLabDetailsDialogOpen(true)
+      console.log('Lab details loaded successfully')
+    } catch (error) {
+      console.error('Error loading lab details:', error)
+      toast({ title: "خطأ", description: "فشل في تحميل تفاصيل المختبر", variant: "destructive" })
+    }
+  }
+
+  // Function to add hint to new question
+  const addHintToQuestion = () => {
+    const hintInput = document.getElementById('hintInput') as HTMLInputElement
+    if (hintInput && hintInput.value.trim()) {
+      setNewQuestion({
+        ...newQuestion,
+        hints: [...newQuestion.hints, hintInput.value.trim()]
+      })
+      hintInput.value = ''
+    }
+  }
+
+  // Function to remove hint from new question
+  const removeHintFromQuestion = (index: number) => {
+    setNewQuestion({
+      ...newQuestion,
+      hints: newQuestion.hints.filter((_, i) => i !== index)
+    })
+  }
+
+  const [avatarFile, setAvatarFile] = useState<File | null>(null)
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    let avatarUrl = editingUser?.avatar_url || ''
+
+    // إذا تم اختيار صورة جديدة
+    if (avatarFile) {
+      const fileExt = avatarFile.name.split('.').pop()
+      const fileName = `${Date.now()}.${fileExt}`
+      const { data, error } = await supabase.storage
+        .from('avatars')
+        .upload(fileName, avatarFile, { upsert: true })
+      if (error) {
+        toast({ title: 'خطأ', description: 'فشل رفع الصورة', variant: 'destructive' })
+        return
+      }
+      avatarUrl = supabase.storage.from('avatars').getPublicUrl(fileName).data.publicUrl
+    }
+
+    try {
+      if (editingUser) {
+        await updateUser(editingUser.id, { ...editingUser, avatar_url: avatarUrl })
+        toast({ title: 'تم بنجاح', description: 'تم تحديث المستخدم بنجاح' })
+      } else {
+        await createUser({ ...newUser, avatar_url: avatarUrl, status: 'نشط', join_date: new Date().toISOString().split('T')[0] })
+        toast({ title: 'تم بنجاح', description: 'تم إضافة المستخدم بنجاح' })
+      }
+      setUserDialogOpen(false)
+    } catch (error) {
+      toast({ title: 'خطأ', description: 'خطأ في حفظ المستخدم', variant: 'destructive' })
+      console.error(error)
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-black flex flex-row-reverse">
+      <Sidebar />
+      <div className="flex-1 mr-64 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Suspense fallback={
+          <div className="flex items-center justify-center h-64">
+            <div className="text-white text-lg">جاري التحميل...</div>
+          </div>
+        }>
+          {loading ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="text-white text-lg">جاري التحقق من الصلاحيات...</div>
+            </div>
+          ) : !adminUser ? (
+            <div className="flex items-center justify-center h-64">
+              <div className="text-white text-lg">جاري إعادة التوجيه...</div>
+            </div>
+          ) : (
+            <>
+              {/* Header with Admin Info */}
+              <div className="flex justify-between items-center mb-8">
+                <div>
+                  <h1 className="text-2xl font-bold text-white">لوحة تحكم المسؤول</h1>
+                  <p className="text-gray-300">مرحباً بك في نظام إدارة المنصة التعليمية</p>
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-right">
+                    <p className="text-white font-medium">
+                      {adminUser ? adminUser.name : 'جاري التحميل...'}
+                    </p>
+                    <p className="text-gray-400 text-sm">
+                      {adminUser ? adminUser.role : ''}
+                    </p>
+                  </div>
+                  <div className="w-10 h-10 bg-[#8648f9]/20 rounded-full flex items-center justify-center">
+                    <span className="text-[#8648f9] font-bold text-lg">
+                      {adminUser ? adminUser.name.charAt(0) : '...'}
+                    </span>
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="border-red-500/20 text-red-500 hover:bg-red-500/10 hover:border-red-500/40 transition-all duration-200"
+                    onClick={async () => {
+                      try {
+                        await supabase.auth.signOut()
+                        router.push('/admin/login')
+                        toast({
+                          title: "تم تسجيل الخروج بنجاح",
+                          description: "تم تسجيل خروجك من النظام",
+                        })
+                      } catch (error) {
+                        toast({
+        {loading ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="text-white text-lg">جاري التحقق من الصلاحيات...</div>
+          </div>
+        ) : !adminUser ? (
+          <div className="flex items-center justify-center h-64">
+            <div className="text-white text-lg">جاري إعادة التوجيه...</div>
+          </div>
+        ) : (
+          <>
+            {/* Header with Admin Info */}
+            <div className="flex justify-between items-center mb-8">
+              <div>
+                <h1 className="text-2xl font-bold text-white">لوحة تحكم المسؤول</h1>
+                <p className="text-gray-300">مرحباً بك في نظام إدارة المنصة التعليمية</p>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <p className="text-white font-medium">
+                    {adminUser ? adminUser.name : 'جاري التحميل...'}
+                  </p>
+                  <p className="text-gray-400 text-sm">
+                    {adminUser ? adminUser.role : ''}
+                  </p>
+                </div>
+                <div className="w-10 h-10 bg-[#8648f9]/20 rounded-full flex items-center justify-center">
+                  <span className="text-[#8648f9] font-bold text-lg">
+                    {adminUser ? adminUser.name.charAt(0) : '...'}
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  className="border-red-500/20 text-red-500 hover:bg-red-500/10 hover:border-red-500/40 transition-all duration-200"
+                  onClick={async () => {
+                    try {
+                      await supabase.auth.signOut()
+                      router.push('/admin/login')
+                      toast({
+                        title: "تم تسجيل الخروج بنجاح",
+                        description: "تم تسجيل خروجك من النظام",
+                      })
+                    } catch (error) {
+                      toast({
+                        title: "خطأ في تسجيل الخروج",
+                        description: "حدث خطأ أثناء تسجيل الخروج",
+                        variant: "destructive",
+                      })
+                    }
+                  }}
+                >
+                  <LogOut className="w-4 h-4 ml-2" />
+                  تسجيل خروج
+                </Button>
+              </div>
+            </div>
+
+            {/* Dashboard Content */}
+            {activeTab === 'dashboard' && (
+              <div className="space-y-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  <Card className="bg-gray-900/50 border-[#8648f9]/20">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                      <CardTitle className="text-sm font-medium text-gray-300">إجمالي المستخدمين</CardTitle>
+                      <Users className="h-4 w-4 text-[#8648f9]" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-white">{users.length}</div>
+                      <p className="text-xs text-gray-400">+{users.filter(u => u.status === "نشط").length} نشط</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-gray-900/50 border-[#8648f9]/20">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                      <CardTitle className="text-sm font-medium text-gray-300">المسارات</CardTitle>
+                      <BookOpen className="h-4 w-4 text-[#8648f9]" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-white">{courses.length}</div>
+                      <p className="text-xs text-gray-400">+{courses.filter(c => c.status === "منشور").length} منشور</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-gray-900/50 border-[#8648f9]/20">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                      <CardTitle className="text-sm font-medium text-gray-300">الدروس</CardTitle>
+                      <FileText className="h-4 w-4 text-[#8648f9]" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-white">{lessons.length}</div>
+                      <p className="text-xs text-gray-400">+{lessons.filter(l => l.status === "منشور").length} منشور</p>
+                    </CardContent>
+                  </Card>
+                  <Card className="bg-gray-900/50 border-[#8648f9]/20">
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                      <CardTitle className="text-sm font-medium text-gray-300">المختبرات</CardTitle>
+                      <Monitor className="h-4 w-4 text-[#8648f9]" />
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-2xl font-bold text-white">{labs.length}</div>
+                      <p className="text-xs text-gray-400">+{labs.filter(l => l.status === "نشط").length} نشط</p>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                <Card className="bg-gray-900/50 border-[#8648f9]/20">
+                  <CardHeader>
+                    <CardTitle className="text-white">مرحباً بك في لوحة التحكم</CardTitle>
+                    <CardDescription className="text-gray-300">
+                      يمكنك إدارة جميع جوانب المنصة التعليمية من خلال الأقسام المختلفة
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="text-center p-4 bg-gray-800/30 rounded-lg border border-[#8648f9]/10">
+                        <Users className="w-8 h-8 text-[#8648f9] mx-auto mb-2" />
+                        <h3 className="text-white font-medium mb-1">إدارة المستخدمين</h3>
+                        <p className="text-gray-400 text-sm">إضافة وتحرير وحذف المستخدمين</p>
+                      </div>
+                      <div className="text-center p-4 bg-gray-800/30 rounded-lg border border-[#8648f9]/10">
+                        <BookOpen className="w-8 h-8 text-[#8648f9] mx-auto mb-2" />
+                        <h3 className="text-white font-medium mb-1">إدارة المسارات</h3>
+                        <p className="text-gray-400 text-sm">إنشاء وتنظيم المسارات التعليمية</p>
+                      </div>
+                      <div className="text-center p-4 bg-gray-800/30 rounded-lg border border-[#8648f9]/10">
+                        <FileText className="w-8 h-8 text-[#8648f9] mx-auto mb-2" />
+                        <h3 className="text-white font-medium mb-1">إدارة الدروس</h3>
+                        <p className="text-gray-400 text-sm">إضافة محتوى الدروس التعليمية</p>
+                      </div>
+                      <div className="text-center p-4 bg-gray-800/30 rounded-lg border border-[#8648f9]/10">
+                        <Monitor className="w-8 h-8 text-[#8648f9] mx-auto mb-2" />
+                        <h3 className="text-white font-medium mb-1">إدارة المختبرات</h3>
+                        <p className="text-gray-400 text-sm">إنشاء المختبرات العملية</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {/* Users Tab */}
+            {activeTab === 'users' && (
+              <Card className="bg-gray-900/50 border-[#8648f9]/20">
+                <CardHeader>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <CardTitle className="text-white">إدارة المستخدمين</CardTitle>
+                      <CardDescription className="text-gray-300">إضافة وإدارة المستخدمين في المنصة</CardDescription>
+                    </div>
+                    <Dialog open={userDialogOpen} onOpenChange={setUserDialogOpen}>
+                      <DialogTrigger asChild>
+                        <Button className="bg-[#8648f9] hover:bg-[#8648f9]/80 text-white">
+                          <Plus className="w-4 h-4 ml-2" />
+                          إضافة مستخدم
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="bg-gray-900 border-[#8648f9]/20">
+                        <DialogHeader>
+                          <DialogTitle className="text-white">إضافة مستخدم جديد</DialogTitle>
+                          <DialogDescription className="text-gray-300">أدخل بيانات المستخدم الجديد</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <div>
+                            <Label htmlFor="userName" className="text-white">
+                              الاسم *
+                            </Label>
+                            <Input
+                              id="userName"
+                              value={newUser.name}
+                              onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
+                              className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                              placeholder="أدخل اسم المستخدم"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="userEmail" className="text-white">
+                              البريد الإلكتروني *
+                            </Label>
+                            <Input
+                              id="userEmail"
+                              type="email"
+                              value={newUser.email}
+                              onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                              className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                              placeholder="أدخل البريد الإلكتروني"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="userRole" className="text-white">
+                              الدور
+                            </Label>
+                            <select
+                              id="userRole"
+                              value={newUser.role}
+                              onChange={(e) => setNewUser({ ...newUser, role: e.target.value as UserRole })}
+                              className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                            >
+                              <option value="طالب">طالب</option>
+                              <option value="مدرب">مدرب</option>
+                              <option value="مسؤول">مسؤول</option>
+                            </select>
+                          </div>
+                          <div>
+                            <Label htmlFor="avatar_url">الصورة الشخصية</Label>
+                            <Input
+                              id="avatar_url"
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => setAvatarFile(e.target.files?.[0] || null)}
+                            />
+                            {newUser.avatar_url && (
+                              <div className="mt-2">
+                                <Image src={newUser.avatar_url} alt="avatar" width={80} height={80} className="rounded-full" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <Button onClick={handleAddUser} className="flex-1 bg-[#8648f9] hover:bg-[#8648f9]/80 text-white">
+                              <Save className="w-4 h-4 ml-2" />
+                              إضافة المستخدم
+                            </Button>
+                            <Button
+                              variant="outline"
+                              onClick={() => setUserDialogOpen(false)}
+                              className="border-gray-500/20 text-gray-300"
+                            >
+                              <X className="w-4 h-4 ml-2" />
+                              إلغاء
+                            </Button>
+                          </div>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="mb-4">
+                    <div className="relative">
+                      <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                      <Input
+                        placeholder="البحث عن مستخدم..."
+                        value={userSearch}
+                        onChange={(e) => setUserSearch(e.target.value)}
+                        className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400"
+                      />
+                    </div>
+                  </div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-[#8648f9]/20">
+                        <TableHead className="text-gray-300">الاسم</TableHead>
+                        <TableHead className="text-gray-300">البريد الإلكتروني</TableHead>
+                        <TableHead className="text-gray-300">الدور</TableHead>
+                        <TableHead className="text-gray-300">الحالة</TableHead>
+                        <TableHead className="text-gray-300">تاريخ الانضمام</TableHead>
+                        <TableHead className="text-gray-300">الإجراءات</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredUsers.map((user) => (
+                        <TableRow key={user.id} className="border-[#8648f9]/20">
+                          <TableCell className="text-white">{user.name}</TableCell>
+                          <TableCell className="text-gray-300">{user.email}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="border-[#8648f9]/20 text-[#8648f9]">
+                              {user.role}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={
+                                user.status === "نشط"
+                                  ? "border-green-500/20 text-green-500"
+                                  : "border-red-500/20 text-red-500"
+                              }
+                            >
+                              {user.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-gray-300">{user.join_date}</TableCell>
+                          <TableCell>
+                            <div className="flex gap-2">
+                              <Dialog>
+                                <DialogTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setEditingUser(user)}
+                                    className="border-[#8648f9]/20 text-[#8648f9] hover:bg-[#8648f9]/10"
+                                  >
+                                    <Edit className="w-3 h-3" />
+                                  </Button>
+                                </DialogTrigger>
+                                <DialogContent className="bg-gray-900 border-[#8648f9]/20">
+                                  <DialogHeader>
+                                    <DialogTitle className="text-white">تحرير المستخدم</DialogTitle>
+                                  </DialogHeader>
+                                  {editingUser && (
+                                    <div className="space-y-4">
+                                      <div>
+                                        <Label className="text-white">الاسم</Label>
+                                        <Input
+                                          value={editingUser.name}
+                                          onChange={(e) => setEditingUser({ ...editingUser, name: e.target.value })}
+                                          className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-white">البريد الإلكتروني</Label>
+                                        <Input
+                                          value={editingUser.email}
+                                          onChange={(e) => setEditingUser({ ...editingUser, email: e.target.value })}
+                                          className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-white">الدور</Label>
+                                        <select
+                                          value={editingUser.role}
+                                          onChange={(e) => setEditingUser({ ...editingUser, role: e.target.value as UserRole })}
+                                          className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                                        >
+                                          <option value="طالب">طالب</option>
+                                          <option value="مدرب">مدرب</option>
+                                          <option value="مسؤول">مسؤول</option>
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <Label className="text-white">الصورة الشخصية</Label>
+                                        <Input
+                                          type="file"
+                                          accept="image/*"
+                                          onChange={(e) => setAvatarFile(e.target.files?.[0] || null)}
+                                        />
+                                        {editingUser.avatar_url && (
+                                          <div className="mt-2">
+                                            <Image src={editingUser.avatar_url} alt="avatar" width={80} height={80} className="rounded-full" />
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <Button
+                                          onClick={handleSubmit}
+                                          className="flex-1 bg-[#8648f9] hover:bg-[#8648f9]/80 text-white"
+                                        >
+                                          حفظ التغييرات
+                                        </Button>
+                                        <Button
+                                          variant="outline"
+                                          onClick={() => setEditingUser(null)}
+                                          className="border-gray-500/20 text-gray-300"
+                                        >
+                                          إلغاء
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </DialogContent>
+                              </Dialog>
+
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleToggleUserStatus(user.id, user.status as "نشط" | "معطل")}
+                                className={
+                                  user.status === "نشط"
+                                    ? "border-yellow-500/20 text-yellow-500 hover:bg-yellow-500/10"
+                                    : "border-green-500/20 text-green-500 hover:bg-green-500/10"
+                                }
+                              >
+                                {user.status === "نشط" ? (
+                                  <AlertCircle className="w-3 h-3" />
+                                ) : (
+                                  <Check className="w-3 h-3" />
+                                )}
+                              </Button>
+
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-red-500/20 text-red-500 hover:bg-red-500/10"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent className="bg-gray-900 border-[#8648f9]/20">
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle className="text-white">تأكيد الحذف</AlertDialogTitle>
+                                    <AlertDialogDescription className="text-gray-300">
+                                      هل أنت متأكد من حذف المستخدم "{user.name}"؟ لا يمكن التراجع عن هذا الإجراء.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel className="bg-gray-800 text-white border-gray-600">
+                                      إلغاء
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDeleteUser(user.id)}
+                                      className="bg-red-600 hover:bg-red-700"
+                                    >
+                                      حذف
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Courses Tab */}
+            {activeTab === 'courses' && (
+              <Card className="bg-gray-900/50 border-[#8648f9]/20">
+                <CardHeader>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <CardTitle className="text-white">إدارة المسارات</CardTitle>
+                      <CardDescription className="text-gray-300">إضافة وإدارة المسارات التعليمية</CardDescription>
+                    </div>
+                    <Dialog open={courseDialogOpen} onOpenChange={setCourseDialogOpen}>
+                      <DialogTrigger asChild>
+                        <Button className="bg-[#8648f9] hover:bg-[#8648f9]/80 text-white">
+                          <Plus className="w-4 h-4 ml-2" />
+                          إضافة مسار
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="bg-gray-900 border-[#8648f9]/20">
+                        <DialogHeader>
+                          <DialogTitle className="text-white">إضافة مسار جديد</DialogTitle>
+                          <DialogDescription className="text-gray-300">أدخل بيانات المسار الجديد</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <div>
+                            <Label htmlFor="courseTitle" className="text-white">
+                              عنوان المسار *
+                            </Label>
+                            <Input
+                              id="courseTitle"
+                              value={newCourse.title}
+                              onChange={(e) => setNewCourse({ ...newCourse, title: e.target.value })}
+                              className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                              placeholder="أدخل عنوان المسار"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="courseDescription" className="text-white">
+                              وصف المسار
+                            </Label>
+                            <Textarea
+                              id="courseDescription"
+                              value={newCourse.description}
+                              onChange={(e) => setNewCourse({ ...newCourse, description: e.target.value })}
+                              className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                              placeholder="أدخل وصف المسار"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="courseLevel" className="text-white">
+                              المستوى
+                            </Label>
+                            <select
+                              id="courseLevel"
+                              value={newCourse.level}
+                              onChange={(e) => setNewCourse({ ...newCourse, level: e.target.value as CourseLevel })}
+                              className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                            >
+                              <option value="مبتدئ">مبتدئ</option>
+                              <option value="متوسط">متوسط</option>
+                              <option value="متقدم">متقدم</option>
+                            </select>
+                          </div>
+                          <div>
+                            <Label htmlFor="courseImage" className="text-white">
+                              صورة المسار
+                            </Label>
+                            <div className="flex items-center gap-4">
+                              <Input
+                                id="courseImage"
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => setCourseImageFile(e.target.files?.[0] || null)}
+                                className="flex-1"
+                              />
+                              <Upload className="w-5 h-5 text-gray-400" />
+                            </div>
+                            {courseImageFile && (
+                              <div className="mt-2">
+                                <p className="text-sm text-gray-400 mb-2">الصورة المختارة:</p>
+                                <Image 
+                                  src={URL.createObjectURL(courseImageFile)} 
+                                  alt="صورة المسار المختارة" 
+                                  width={120} 
+                                  height={80} 
+                                  className="rounded-lg border-2 border-green-500/20 object-cover" 
+                                />
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-2">
+                            <Button onClick={handleAddCourse} className="flex-1 bg-[#8648f9] hover:bg-[#8648f9]/80 text-white">
+                              <Save className="w-4 h-4 ml-2" />
+                              إضافة المسار
+                            </Button>
+                            <Button
+                              variant="outline"
+                              onClick={() => setCourseDialogOpen(false)}
+                              className="border-gray-500/20 text-gray-300"
+                            >
+                              <X className="w-4 h-4 ml-2" />
+                              إلغاء
+                            </Button>
+                          </div>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="mb-4">
+                    <div className="relative">
+                      <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                      <Input
+                        placeholder="البحث في المسارات..."
+                        value={courseSearch}
+                        onChange={(e) => setCourseSearch(e.target.value)}
+                        className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400"
+                      />
+                    </div>
+                  </div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-[#8648f9]/20">
+                        <TableHead className="text-gray-300">الصورة</TableHead>
+                        <TableHead className="text-gray-300">العنوان</TableHead>
+                        <TableHead className="text-gray-300">الوصف</TableHead>
+                        <TableHead className="text-gray-300">المستوى</TableHead>
+                        <TableHead className="text-gray-300">الحالة</TableHead>
+                        <TableHead className="text-gray-300">عدد الطلاب</TableHead>
+                        <TableHead className="text-gray-300">الإجراءات</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredCourses.map((course) => (
+                        <TableRow key={course.id} className="border-[#8648f9]/20">
+                          <TableCell>
+                            {course.image ? (
+                              <Image 
+                                src={course.image} 
+                                alt={course.title} 
+                                width={60} 
+                                height={40} 
+                                className="rounded-lg object-cover" 
+                              />
+                            ) : (
+                              <div className="w-[60px] h-[40px] bg-gray-700 rounded-lg flex items-center justify-center">
+                                <BookOpen className="w-4 h-4 text-gray-400" />
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-white">{course.title}</TableCell>
+                          <TableCell className="text-gray-300">{course.description || '-'}</TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="border-[#8648f9]/20 text-[#8648f9]">
+                              {course.level}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={
+                                course.status === "منشور"
+                                  ? "border-green-500/20 text-green-500"
+                                  : "border-yellow-500/20 text-yellow-500"
+                              }
+                            >
+                              {course.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-gray-300">{course.students}</TableCell>
+                          <TableCell>
+                            <div className="flex gap-2">
+                              <Dialog>
+                                <DialogTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setEditingCourse(course)}
+                                    className="border-[#8648f9]/20 text-[#8648f9] hover:bg-[#8648f9]/10"
+                                  >
+                                    <Edit className="w-3 h-3" />
+                                  </Button>
+                                </DialogTrigger>
+                                <DialogContent className="bg-gray-900 border-[#8648f9]/20">
+                                  <DialogHeader>
+                                    <DialogTitle className="text-white">تحرير المسار</DialogTitle>
+                                  </DialogHeader>
+                                  {editingCourse && (
+                                    <div className="space-y-4">
+                                      <div>
+                                        <Label className="text-white">العنوان</Label>
+                                        <Input
+                                          value={editingCourse.title}
+                                          onChange={(e) => setEditingCourse({ ...editingCourse, title: e.target.value })}
+                                          className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-white">الوصف</Label>
+                                        <Textarea
+                                          value={editingCourse.description || ''}
+                                          onChange={(e) => setEditingCourse({ ...editingCourse, description: e.target.value })}
+                                          className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-white">المستوى</Label>
+                                        <select
+                                          value={editingCourse.level}
+                                          onChange={(e) => setEditingCourse({ ...editingCourse, level: e.target.value as CourseLevel })}
+                                          className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                                        >
+                                          <option value="مبتدئ">مبتدئ</option>
+                                          <option value="متوسط">متوسط</option>
+                                          <option value="متقدم">متقدم</option>
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <Label className="text-white">صورة المسار</Label>
+                                        <div className="flex items-center gap-4">
+                                          <Input
+                                            type="file"
+                                            accept="image/*"
+                                            onChange={(e) => setEditingCourseImageFile(e.target.files?.[0] || null)}
+                                            className="flex-1"
+                                          />
+                                          <Upload className="w-5 h-5 text-gray-400" />
+                                        </div>
+                                        {editingCourse.image && editingCourse.image !== '/course-placeholder.jpg' && (
+                                          <div className="mt-2">
+                                            <p className="text-sm text-gray-400 mb-2">الصورة الحالية:</p>
+                                            <Image 
+                                              src={editingCourse.image} 
+                                              alt="الصورة الحالية" 
+                                              width={120} 
+                                              height={80} 
+                                              className="rounded-lg border-2 border-[#8648f9]/20 object-cover" 
+                                            />
+                                          </div>
+                                        )}
+                                        {editingCourseImageFile && (
+                                          <div className="mt-2">
+                                            <p className="text-sm text-gray-400 mb-2">الصورة المختارة:</p>
+                                            <Image 
+                                              src={URL.createObjectURL(editingCourseImageFile)} 
+                                              alt="الصورة المختارة" 
+                                              width={120} 
+                                              height={80} 
+                                              className="rounded-lg border-2 border-green-500/20 object-cover" 
+                                            />
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <Button
+                                          onClick={handleUpdateCourse}
+                                          className="flex-1 bg-[#8648f9] hover:bg-[#8648f9]/80 text-white"
+                                        >
+                                          حفظ التغييرات
+                                        </Button>
+                                        <Button
+                                          variant="outline"
+                                          onClick={() => setEditingCourse(null)}
+                                          className="border-gray-500/20 text-gray-300"
+                                        >
+                                          إلغاء
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </DialogContent>
+                              </Dialog>
+
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-red-500/20 text-red-500 hover:bg-red-500/10"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent className="bg-gray-900 border-[#8648f9]/20">
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle className="text-white">تأكيد الحذف</AlertDialogTitle>
+                                    <AlertDialogDescription className="text-gray-300">
+                                      هل أنت متأكد من حذف المسار "{course.title}"؟ لا يمكن التراجع عن هذا الإجراء.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel className="bg-gray-800 text-white border-gray-600">
+                                      إلغاء
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDeleteCourse(course.id)}
+                                      className="bg-red-600 hover:bg-red-700"
+                                    >
+                                      حذف
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Lessons Tab */}
+            {activeTab === 'lessons' && (
+              <Card className="bg-gray-900/50 border-[#8648f9]/20">
+                <CardHeader>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <CardTitle className="text-white">إدارة الدروس</CardTitle>
+                      <CardDescription className="text-gray-300">إضافة وإدارة الدروس التعليمية</CardDescription>
+                    </div>
+                    <Dialog open={lessonDialogOpen} onOpenChange={setLessonDialogOpen}>
+                      <DialogTrigger asChild>
+                        <Button className="bg-[#8648f9] hover:bg-[#8648f9]/80 text-white">
+                          <Plus className="w-4 h-4 ml-2" />
+                          إضافة درس
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="bg-gray-900 border-[#8648f9]/20">
+                        <DialogHeader>
+                          <DialogTitle className="text-white">إضافة درس جديد</DialogTitle>
+                          <DialogDescription className="text-gray-300">أدخل بيانات الدرس الجديد</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <div>
+                            <Label htmlFor="lessonTitle" className="text-white">
+                              عنوان الدرس *
+                            </Label>
+                            <Input
+                              id="lessonTitle"
+                              value={newLesson.title}
+                              onChange={(e) => setNewLesson({ ...newLesson, title: e.target.value })}
+                              className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                              placeholder="أدخل عنوان الدرس"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="lessonCourse" className="text-white">
+                              المسار *
+                            </Label>
+                            <select
+                              id="lessonCourse"
+                              value={newLesson.course_id}
+                              onChange={(e) => setNewLesson({ ...newLesson, course_id: parseInt(e.target.value) || 0 })}
+                              className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                            >
+                              <option value={0}>اختر المسار</option>
+                              {courses.map((course) => (
+                                <option key={course.id} value={course.id}>
+                                  {course.title}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <Label htmlFor="lessonDescription" className="text-white">
+                              وصف الدرس
+                            </Label>
+                            <Textarea
+                              id="lessonDescription"
+                              value={newLesson.description}
+                              onChange={(e) => setNewLesson({ ...newLesson, description: e.target.value })}
+                              className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                              placeholder="أدخل وصف الدرس"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="lessonContent" className="text-white">
+                              محتوى الدرس *
+                            </Label>
+                            <Textarea
+                              id="lessonContent"
+                              value={newLesson.content}
+                              onChange={(e) => setNewLesson({ ...newLesson, content: e.target.value })}
+                              className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                              placeholder="أدخل محتوى الدرس (HTML مسموح)"
+                              rows={6}
+                            />
+                          </div>
+                          <div className="grid grid-cols-2 gap-4">
+                            <div>
+                              <Label htmlFor="lessonDuration" className="text-white">
+                                مدة الدرس
+                              </Label>
+                              <Input
+                                id="lessonDuration"
+                                value={newLesson.duration}
+                                onChange={(e) => setNewLesson({ ...newLesson, duration: e.target.value })}
+                                className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                placeholder="مثال: 45 دقيقة"
+                              />
+                            </div>
+                            <div>
+                              <Label htmlFor="lessonOrder" className="text-white">
+                                ترتيب الدرس
+                              </Label>
+                              <Input
+                                id="lessonOrder"
+                                type="number"
+                                value={newLesson.lesson_order}
+                                onChange={(e) => setNewLesson({ ...newLesson, lesson_order: parseInt(e.target.value) || 1 })}
+                                className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                placeholder="1"
+                              />
+                            </div>
+                          </div>
+                          <div>
+                            <Label htmlFor="lessonStatus" className="text-white">
+                              حالة الدرس
+                            </Label>
+                            <select
+                              id="lessonStatus"
+                              value={newLesson.status}
+                              onChange={(e) => setNewLesson({ ...newLesson, status: e.target.value as 'منشور' | 'مسودة' })}
+                              className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                            >
+                              <option value="مسودة">مسودة</option>
+                              <option value="منشور">منشور</option>
+                            </select>
+                          </div>
+                          <div>
+                            <Label className="text-white">المواد التعليمية (روابط)</Label>
+                            {newLesson.materials.map((mat, idx) => (
+                              <div key={idx} className="flex gap-2 mb-2">
+                                <Input
+                                  placeholder="اسم المادة"
+                                  value={mat.name}
+                                  onChange={e => {
+                                    const arr = [...newLesson.materials]
+                                    arr[idx].name = e.target.value
+                                    setNewLesson({ ...newLesson, materials: arr })
+                                  }}
+                                  className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                />
+                                <Input
+                                  placeholder="رابط المادة (URL)"
+                                  value={mat.url}
+                                  onChange={e => {
+                                    const arr = [...newLesson.materials]
+                                    arr[idx].url = e.target.value
+                                    setNewLesson({ ...newLesson, materials: arr })
+                                  }}
+                                  className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                />
+                                <Button
+                                  variant="outline"
+                                  className="border-red-500/20 text-red-500"
+                                  onClick={() => {
+                                    setNewLesson({ ...newLesson, materials: newLesson.materials.filter((_, i) => i !== idx) })
+                                  }}
+                                >حذف</Button>
+                              </div>
+                            ))}
+                            <Button
+                              type="button"
+                              className="bg-[#8648f9] hover:bg-[#8648f9]/80 text-white mt-2"
+                              onClick={() => setNewLesson({ ...newLesson, materials: [...newLesson.materials, { name: '', url: '' }] })}
+                            >إضافة مادة</Button>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button onClick={handleAddLesson} className="flex-1 bg-[#8648f9] hover:bg-[#8648f9]/80 text-white">
+                              <Save className="w-4 h-4 ml-2" />
+                              إضافة الدرس
+                            </Button>
+                            <Button
+                              variant="outline"
+                              onClick={() => setLessonDialogOpen(false)}
+                              className="border-gray-500/20 text-gray-300"
+                            >
+                              <X className="w-4 h-4 ml-2" />
+                              إلغاء
+                            </Button>
+                          </div>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="mb-4">
+                    <div className="relative">
+                      <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                      <Input
+                        placeholder="البحث في الدروس..."
+                        value={lessonSearch}
+                        onChange={(e) => setLessonSearch(e.target.value)}
+                        className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400"
+                      />
+                    </div>
+                  </div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-[#8648f9]/20">
+                        <TableHead className="text-gray-300">العنوان</TableHead>
+                        <TableHead className="text-gray-300">المسار</TableHead>
+                        <TableHead className="text-gray-300">الوصف</TableHead>
+                        <TableHead className="text-gray-300">المدة</TableHead>
+                        <TableHead className="text-gray-300">الترتيب</TableHead>
+                        <TableHead className="text-gray-300">الحالة</TableHead>
+                        <TableHead className="text-gray-300">الإجراءات</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredLessons.map((lesson) => {
+                        const admin = lesson.admin_id ? getAdminById(lesson.admin_id) : undefined
+                        let adminCellContent: React.ReactNode
+                        if (admin) {
+                          adminCellContent = (
+                            <div className="flex items-center gap-2">
+                              {admin.avatar_url ? (
+                                <img src={admin.avatar_url || ''} alt={admin.name || ''} className="w-8 h-8 rounded-full" />
+                              ) : (
+                                <div className="w-8 h-8 rounded-full bg-[#8648f9]/20 flex items-center justify-center text-[#8648f9] font-bold">
+                                  {admin.name ? admin.name.charAt(0) : '?'}
+                                </div>
+                              )}
+                              <span className="text-white text-sm">{admin.name}</span>
+                            </div>
+                          )
+                        } else {
+                          adminCellContent = <span className="text-gray-400 text-xs">غير محدد</span>
+                        }
+                        return (
+                          <TableRow key={lesson.id} className="border-[#8648f9]/20">
+                            <TableCell className="text-white">{lesson.title}</TableCell>
+                            <TableCell className="text-gray-300">
+                              {courses.find(c => c.id === lesson.course_id)?.title || '-'}
+                            </TableCell>
+                            <TableCell className="text-gray-300">{lesson.description || '-'}</TableCell>
+                            <TableCell className="text-gray-300">{lesson.duration || '-'}</TableCell>
+                            <TableCell className="text-gray-300">{lesson.lesson_order}</TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="outline"
+                                className={
+                                  lesson.status === "منشور"
+                                    ? "border-green-500/20 text-green-500"
+                                    : "border-yellow-500/20 text-yellow-500"
+                                }
+                              >
+                                {lesson.status}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>{adminCellContent}</TableCell>
+                            <TableCell>
+                              <div className="flex gap-2">
+                                <Dialog>
+                                  <DialogTrigger asChild>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => setEditingLesson(lesson)}
+                                      className="border-[#8648f9]/20 text-[#8648f9] hover:bg-[#8648f9]/10"
+                                    >
+                                      <Edit className="w-3 h-3" />
+                                    </Button>
+                                  </DialogTrigger>
+                                  <DialogContent className="bg-gray-900 border-[#8648f9]/20">
+                                    <DialogHeader>
+                                      <DialogTitle className="text-white">تحرير الدرس</DialogTitle>
+                                    </DialogHeader>
+                                    {editingLesson && (
+                                      <div className="space-y-4">
+                                        <div>
+                                          <Label className="text-white">العنوان</Label>
+                                          <Input
+                                            value={editingLesson.title}
+                                            onChange={(e) => setEditingLesson({ ...editingLesson, title: e.target.value })}
+                                            className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                          />
+                                        </div>
+                                        <div>
+                                          <Label className="text-white">المسار</Label>
+                                          <select
+                                            value={editingLesson.course_id}
+                                            onChange={(e) => setEditingLesson({ ...editingLesson, course_id: parseInt(e.target.value) || 0 })}
+                                            className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                                          >
+                                            {courses.map((course) => (
+                                              <option key={course.id} value={course.id}>
+                                                {course.title}
+                                              </option>
+                                            ))}
+                                          </select>
+                                        </div>
+                                        <div>
+                                          <Label className="text-white">الوصف</Label>
+                                          <Textarea
+                                            value={editingLesson.description || ''}
+                                            onChange={(e) => setEditingLesson({ ...editingLesson, description: e.target.value })}
+                                            className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                          />
+                                        </div>
+                                        <div>
+                                          <Label className="text-white">المحتوى</Label>
+                                          <Textarea
+                                            value={editingLesson.content}
+                                            onChange={(e) => setEditingLesson({ ...editingLesson, content: e.target.value })}
+                                            className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                            rows={6}
+                                          />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-4">
+                                          <div>
+                                            <Label className="text-white">المدة</Label>
+                                            <Input
+                                              value={editingLesson.duration || ''}
+                                              onChange={(e) => setEditingLesson({ ...editingLesson, duration: e.target.value })}
+                                              className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                            />
+                                          </div>
+                                          <div>
+                                            <Label className="text-white">الترتيب</Label>
+                                            <Input
+                                              type="number"
+                                              value={editingLesson.lesson_order}
+                                              onChange={(e) => setEditingLesson({ ...editingLesson, lesson_order: parseInt(e.target.value) || 1 })}
+                                              className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                            />
+                                          </div>
+                                        </div>
+                                        <div>
+                                          <Label className="text-white">الحالة</Label>
+                                          <select
+                                            value={editingLesson.status}
+                                            onChange={(e) => setEditingLesson({ ...editingLesson, status: e.target.value as 'منشور' | 'مسودة' })}
+                                            className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                                          >
+                                            <option value="مسودة">مسودة</option>
+                                            <option value="منشور">منشور</option>
+                                          </select>
+                                        </div>
+                                        <div className="flex gap-2">
+                                          <Button
+                                            onClick={handleUpdateLesson}
+                                            className="flex-1 bg-[#8648f9] hover:bg-[#8648f9]/80 text-white"
+                                          >
+                                            حفظ التغييرات
+                                          </Button>
+                                          <Button
+                                            variant="outline"
+                                            onClick={() => setEditingLesson(null)}
+                                            className="border-gray-500/20 text-gray-300"
+                                          >
+                                            إلغاء
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </DialogContent>
+                                </Dialog>
+
+                                <AlertDialog>
+                                  <AlertDialogTrigger asChild>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="border-red-500/20 text-red-500 hover:bg-red-500/10"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </Button>
+                                  </AlertDialogTrigger>
+                                  <AlertDialogContent className="bg-gray-900 border-[#8648f9]/20">
+                                    <AlertDialogHeader>
+                                      <AlertDialogTitle className="text-white">تأكيد الحذف</AlertDialogTitle>
+                                      <AlertDialogDescription className="text-gray-300">
+                                        هل أنت متأكد من حذف الدرس "{lesson.title}"؟ لا يمكن التراجع عن هذا الإجراء.
+                                      </AlertDialogDescription>
+                                    </AlertDialogHeader>
+                                    <AlertDialogFooter>
+                                      <AlertDialogCancel className="bg-gray-800 text-white border-gray-600">
+                                        إلغاء
+                                      </AlertDialogCancel>
+                                      <AlertDialogAction
+                                        onClick={() => handleDeleteLesson(lesson.id)}
+                                        className="bg-red-600 hover:bg-red-700"
+                                      >
+                                        حذف
+                                      </AlertDialogAction>
+                                    </AlertDialogFooter>
+                                  </AlertDialogContent>
+                                </AlertDialog>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Labs Tab */}
+            {activeTab === 'labs' && (
+              <Card className="bg-gray-900/50 border-[#8648f9]/20">
+                <CardHeader>
+                  <div className="flex justify-between items-center">
+                    <div>
+                      <CardTitle className="text-white">إدارة المختبرات</CardTitle>
+                      <CardDescription className="text-gray-300">إضافة وإدارة المختبرات العملية</CardDescription>
+                    </div>
+                    <Dialog open={labDialogOpen} onOpenChange={setLabDialogOpen}>
+                      <DialogTrigger asChild>
+                        <Button className="bg-[#8648f9] hover:bg-[#8648f9]/80 text-white">
+                          <Plus className="w-4 h-4 ml-2" />
+                          إضافة مختبر
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="bg-gray-900 border-[#8648f9]/20">
+                        <DialogHeader>
+                          <DialogTitle className="text-white">إضافة مختبر جديد</DialogTitle>
+                          <DialogDescription className="text-gray-300">أدخل بيانات المختبر الجديد</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4">
+                          <div>
+                            <Label htmlFor="labTitle" className="text-white">
+                              عنوان المختبر *
+                            </Label>
+                            <Input
+                              id="labTitle"
+                              value={newLab.title}
+                              onChange={(e) => setNewLab({ ...newLab, title: e.target.value })}
+                              className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                              placeholder="أدخل عنوان المختبر"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="labDescription" className="text-white">
+                              وصف المختبر
+                            </Label>
+                            <Textarea
+                              id="labDescription"
+                              value={newLab.description}
+                              onChange={(e) => setNewLab({ ...newLab, description: e.target.value })}
+                              className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                              placeholder="أدخل وصف المختبر"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="labInstructions" className="text-white">
+                              تعليمات المختبر
+                            </Label>
+                            <Textarea
+                              id="labInstructions"
+                              value={newLab.instructions}
+                              onChange={(e) => setNewLab({ ...newLab, instructions: e.target.value })}
+                              className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                              placeholder="أدخل تعليمات المختبر للطلاب"
+                              rows={4}
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="labCourse" className="text-white">
+                              المسار *
+                            </Label>
+                            <select
+                              id="labCourse"
+                              value={newLab.course_id}
+                              onChange={(e) => setNewLab({ ...newLab, course_id: parseInt(e.target.value) })}
+                              className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                            >
+                              <option value={0}>اختر المسار</option>
+                              {courses.map((course) => (
+                                <option key={course.id} value={course.id}>
+                                  {course.title}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <Label htmlFor="labDifficulty" className="text-white">
+                              مستوى الصعوبة
+                            </Label>
+                            <select
+                              id="labDifficulty"
+                              value={newLab.difficulty}
+                              onChange={(e) => setNewLab({ ...newLab, difficulty: e.target.value as LabDifficulty })}
+                              className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                            >
+                              <option value="مبتدئ">مبتدئ</option>
+                              <option value="متوسط">متوسط</option>
+                              <option value="متقدم">متقدم</option>
+                            </select>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button onClick={handleAddLab} className="flex-1 bg-[#8648f9] hover:bg-[#8648f9]/80 text-white">
+                              <Save className="w-4 h-4 ml-2" />
+                              إضافة المختبر
+                            </Button>
+                            <Button
+                              variant="outline"
+                              onClick={() => setLabDialogOpen(false)}
+                              className="border-gray-500/20 text-gray-300"
+                            >
+                              <X className="w-4 h-4 ml-2" />
+                              إلغاء
+                            </Button>
+                          </div>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <div className="mb-4">
+                    <div className="relative">
+                      <Search className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                      <Input
+                        placeholder="البحث في المختبرات..."
+                        value={labSearch}
+                        onChange={(e) => setLabSearch(e.target.value)}
+                        className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400"
+                      />
+                    </div>
+                  </div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-[#8648f9]/20">
+                        <TableHead className="text-gray-300">العنوان</TableHead>
+                        <TableHead className="text-gray-300">الوصف</TableHead>
+                        <TableHead className="text-gray-300">المسار</TableHead>
+                        <TableHead className="text-gray-300">مستوى الصعوبة</TableHead>
+                        <TableHead className="text-gray-300">الحالة</TableHead>
+                        <TableHead className="text-gray-300">الإجراءات</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredLabs.map((lab) => (
+                        <TableRow key={lab.id} className="border-[#8648f9]/20">
+                          <TableCell className="text-white">{lab.title}</TableCell>
+                          <TableCell className="text-gray-300">{lab.description || '-'}</TableCell>
+                          <TableCell className="text-gray-300">
+                            {courses.find(c => c.id === lab.course_id)?.title || '-'}
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="border-[#8648f9]/20 text-[#8648f9]">
+                              {lab.difficulty}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="outline"
+                              className={
+                                lab.status === "نشط"
+                                  ? "border-green-500/20 text-green-500"
+                                  : "border-yellow-500/20 text-yellow-500"
+                              }
+                            >
+                              {lab.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => loadLabDetails(lab)}
+                                className="border-blue-500/20 text-blue-500 hover:bg-blue-500/10"
+                              >
+                                <Eye className="w-3 h-3" />
+                              </Button>
+                              
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handlePublishLab(lab)}
+                                className={
+                                  lab.status === "نشط"
+                                    ? "border-yellow-500/20 text-yellow-500 hover:bg-yellow-500/10"
+                                    : "border-green-500/20 text-green-500 hover:bg-green-500/10"
+                                }
+                              >
+                                {lab.status === "نشط" ? "إلغاء النشر" : "نشر"}
+                              </Button>
+
+                              <Dialog>
+                                <DialogTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => setEditingLab(lab)}
+                                    className="border-[#8648f9]/20 text-[#8648f9] hover:bg-[#8648f9]/10"
+                                  >
+                                    <Edit className="w-3 h-3" />
+                                  </Button>
+                                </DialogTrigger>
+                                <DialogContent className="bg-gray-900 border-[#8648f9]/20">
+                                  <DialogHeader>
+                                    <DialogTitle className="text-white">تحرير المختبر</DialogTitle>
+                                  </DialogHeader>
+                                  {editingLab && (
+                                    <div className="space-y-4">
+                                      <div>
+                                        <Label className="text-white">العنوان</Label>
+                                        <Input
+                                          value={editingLab.title}
+                                          onChange={(e) => setEditingLab({ ...editingLab, title: e.target.value })}
+                                          className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-white">الوصف</Label>
+                                        <Textarea
+                                          value={editingLab.description || ''}
+                                          onChange={(e) => setEditingLab({ ...editingLab, description: e.target.value })}
+                                          className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-white">تعليمات المختبر</Label>
+                                        <Textarea
+                                          value={editingLab.instructions || ''}
+                                          onChange={(e) => setEditingLab({ ...editingLab, instructions: e.target.value })}
+                                          className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                          placeholder="أدخل تعليمات المختبر للطلاب"
+                                          rows={4}
+                                        />
+                                      </div>
+                                      <div>
+                                        <Label className="text-white">المسار</Label>
+                                        <select
+                                          value={editingLab.course_id}
+                                          onChange={(e) => setEditingLab({ ...editingLab, course_id: parseInt(e.target.value) })}
+                                          className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                                        >
+                                          <option value={0}>اختر المسار</option>
+                                          {courses.map((course) => (
+                                            <option key={course.id} value={course.id}>
+                                              {course.title}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                      <div>
+                                        <Label className="text-white">مستوى الصعوبة</Label>
+                                        <select
+                                          value={editingLab.difficulty}
+                                          onChange={(e) => setEditingLab({ ...editingLab, difficulty: e.target.value as "مبتدئ" | "متوسط" | "متقدم" })}
+                                          className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                                        >
+                                          <option value="مبتدئ">مبتدئ</option>
+                                          <option value="متوسط">متوسط</option>
+                                          <option value="متقدم">متقدم</option>
+                                        </select>
+                                      </div>
+                                      <div className="flex gap-2">
+                                        <Button
+                                          onClick={handleUpdateLab}
+                                          className="flex-1 bg-[#8648f9] hover:bg-[#8648f9]/80 text-white"
+                                        >
+                                          حفظ التغييرات
+                                        </Button>
+                                        <Button
+                                          variant="outline"
+                                          onClick={() => setEditingLab(null)}
+                                          className="border-gray-500/20 text-gray-300"
+                                        >
+                                          إلغاء
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </DialogContent>
+                              </Dialog>
+
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-red-500/20 text-red-500 hover:bg-red-500/10"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent className="bg-gray-900 border-[#8648f9]/20">
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle className="text-white">تأكيد الحذف</AlertDialogTitle>
+                                    <AlertDialogDescription className="text-gray-300">
+                                      هل أنت متأكد من حذف المختبر "{lab.title}"؟ لا يمكن التراجع عن هذا الإجراء.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel className="bg-gray-800 text-white border-gray-600">
+                                      إلغاء
+                                    </AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDeleteLab(lab.id)}
+                                      className="bg-red-600 hover:bg-red-700"
+                                    >
+                                      حذف
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Lab Details Dialog */}
+            <Dialog open={labDetailsDialogOpen} onOpenChange={setLabDetailsDialogOpen}>
+              <DialogContent className="bg-gray-900 border-[#8648f9]/20 max-w-4xl max-h-[80vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle className="text-white">تفاصيل المختبر: {selectedLab?.title}</DialogTitle>
+                  <DialogDescription className="text-gray-300">
+                    إدارة الأجهزة والأسئلة في هذا المختبر
+                  </DialogDescription>
+                </DialogHeader>
+                
+                {selectedLab && (
+                  <div className="space-y-6">
+                    {/* Lab Info */}
+                    <div className="bg-gray-800/30 p-4 rounded-lg">
+                      <h3 className="text-white font-medium mb-2">معلومات المختبر</h3>
+                      <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div>
+                          <span className="text-gray-400">العنوان:</span>
+                          <span className="text-white mr-2">{selectedLab.title}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-400">مستوى الصعوبة:</span>
+                          <Badge variant="outline" className="border-[#8648f9]/20 text-[#8648f9] mr-2">
+                            {selectedLab.difficulty}
+                          </Badge>
+                        </div>
+                        <div>
+                          <span className="text-gray-400">الحالة:</span>
+                          <Badge
+                            variant="outline"
+                            className={
+                              selectedLab.status === "نشط"
+                                ? "border-green-500/20 text-green-500 mr-2"
+                                : "border-yellow-500/20 text-yellow-500 mr-2"
+                            }
+                          >
+                            {selectedLab.status}
+                          </Badge>
+                        </div>
+                        <div>
+                          <span className="text-gray-400">الوصف:</span>
+                          <span className="text-white mr-2">{selectedLab.description || 'لا يوجد وصف'}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Devices Section */}
+                    <div>
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-white font-medium">الأجهزة ({labDevices.length})</h3>
+                        <Dialog open={deviceDialogOpen} onOpenChange={setDeviceDialogOpen}>
+                          <DialogTrigger asChild>
+                            <Button size="sm" className="bg-[#8648f9] hover:bg-[#8648f9]/80 text-white">
+                              <Plus className="w-4 h-4 ml-2" />
+                              إضافة جهاز
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="bg-gray-900 border-[#8648f9]/20">
+                            <DialogHeader>
+                              <DialogTitle className="text-white">إضافة جهاز جديد</DialogTitle>
+                            </DialogHeader>
+                            <div className="space-y-4">
+                              <div>
+                                <Label htmlFor="deviceName" className="text-white">
+                                  اسم الجهاز *
+                                </Label>
+                                <Input
+                                  id="deviceName"
+                                  value={newDevice.name}
+                                  onChange={(e) => setNewDevice({ ...newDevice, name: e.target.value })}
+                                  className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                  placeholder="أدخل اسم الجهاز"
+                                />
+                              </div>
+                              <div>
+                                <Label htmlFor="deviceType" className="text-white">
+                                  نوع الجهاز *
+                                </Label>
+                                <select
+                                  id="deviceType"
+                                  value={newDevice.type}
+                                  onChange={(e) => setNewDevice({ ...newDevice, type: e.target.value as DeviceType })}
+                                  className="w-full p-2 bg-gray-800/50 border border-[#8648f9]/20 rounded-md text-white"
+                                >
+                                  {Object.entries(DEVICE_TYPES).map(([key, device]) => {
+                                    const Icon = device.icon
+                                    return (
+                                      <option key={key} value={key} className="flex items-center">
+                                        {device.name}
+                                      </option>
+                                    )
+                                  })}
+                                </select>
+                                <div className="mt-2 flex items-center gap-2">
+                                  {(() => {
+                                    const deviceType = DEVICE_TYPES[newDevice.type]
+                                    const Icon = deviceType.icon
+                                    return (
+                                      <>
+                                        <Icon className="w-4 h-4" style={{ color: deviceType.color }} />
+                                        <span className="text-sm text-gray-400">{deviceType.name}</span>
+                                        <div 
+                                          className="w-4 h-4 rounded-full" 
+                                          style={{ backgroundColor: deviceType.color }}
+                                        />
+                                      </>
+                                    )
+                                  })()}
+                                </div>
+                              </div>
+                              <div>
+                                <Label htmlFor="deviceIP" className="text-white">
+                                  عنوان IP *
+                                </Label>
+                                <Input
+                                  id="deviceIP"
+                                  value={newDevice.ip}
+                                  onChange={(e) => setNewDevice({ ...newDevice, ip: e.target.value })}
+                                  className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                  placeholder="مثال: 192.168.1.1"
+                                />
+                              </div>
+                              <div>
+                                <Label htmlFor="deviceURL" className="text-white">
+                                  الرابط (اختياري)
+                                </Label>
+                                <Input
+                                  id="deviceURL"
+                                  value={newDevice.url}
+                                  onChange={(e) => setNewDevice({ ...newDevice, url: e.target.value })}
+                                  className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                  placeholder="مثال: http://192.168.1.1"
+                                />
+                              </div>
+                              <div className="flex gap-2">
+                                <Button onClick={handleAddDevice} className="flex-1 bg-[#8648f9] hover:bg-[#8648f9]/80 text-white">
+                                  إضافة الجهاز
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  onClick={() => setDeviceDialogOpen(false)}
+                                  className="border-gray-500/20 text-gray-300"
+                                >
+                                  إلغاء
+                                </Button>
+                              </div>
+                            </div>
+                          </DialogContent>
+                        </Dialog>
+                      </div>
+                      
+                      <div className="bg-gray-800/30 rounded-lg p-4">
+                        {labDevices.length === 0 ? (
+                          <p className="text-gray-400 text-center">لا توجد أجهزة في هذا المختبر</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {labDevices.map((device) => {
+                              const deviceType = DEVICE_TYPES[device.type] || DEVICE_TYPES.server
+                              const Icon = deviceType.icon
+                              return (
+                                <div key={device.id} className="flex justify-between items-center p-3 bg-gray-700/30 rounded">
+                                  <div className="flex items-center gap-3">
+                                    <div 
+                                      className="w-8 h-8 rounded-full flex items-center justify-center"
+                                      style={{ backgroundColor: `${deviceType.color}20`, border: `1px solid ${deviceType.color}40` }}
+                                    >
+                                      <Icon className="w-4 h-4" style={{ color: deviceType.color }} />
+                                    </div>
+                                    <div>
+                                      <span className="text-white font-medium">{device.name}</span>
+                                      <div className="text-xs text-gray-400">
+                                        {deviceType.name} • {device.ip}
+                                        {device.url && <span> • <a href={device.url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline">رابط</a></span>}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => setEditingDevice(device)}
+                                      className="border-[#8648f9]/20 text-[#8648f9] hover:bg-[#8648f9]/10"
+                                    >
+                                      <Edit className="w-3 h-3" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleDeleteDevice(device.id)}
+                                      className="border-red-500/20 text-red-500 hover:bg-red-500/10"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Questions Section */}
+                    <div>
+                      <div className="flex justify-between items-center mb-4">
+                        <h3 className="text-white font-medium">الأسئلة ({labQuestions.length})</h3>
+                        <Dialog open={questionDialogOpen} onOpenChange={setQuestionDialogOpen}>
+                          <DialogTrigger asChild>
+                            <Button size="sm" className="bg-[#8648f9] hover:bg-[#8648f9]/80 text-white">
+                              <Plus className="w-4 h-4 ml-2" />
+                              إضافة سؤال
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="bg-gray-900 border-[#8648f9]/20">
+                            <DialogHeader>
+                              <DialogTitle className="text-white">إضافة سؤال جديد</DialogTitle>
+                            </DialogHeader>
+                            <div className="space-y-4">
+                              <div>
+                                <Label htmlFor="questionText" className="text-white">
+                                  السؤال *
+                                </Label>
+                                <Textarea
+                                  id="questionText"
+                                  value={newQuestion.question}
+                                  onChange={(e) => setNewQuestion({ ...newQuestion, question: e.target.value })}
+                                  className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                  placeholder="أدخل السؤال"
+                                  rows={3}
+                                />
+                              </div>
+                              <div>
+                                <Label htmlFor="correctAnswer" className="text-white">
+                                  الإجابة الصحيحة *
+                                </Label>
+                                <Input
+                                  id="correctAnswer"
+                                  value={newQuestion.correct_answer}
+                                  onChange={(e) => setNewQuestion({ ...newQuestion, correct_answer: e.target.value })}
+                                  className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                  placeholder="أدخل الإجابة الصحيحة"
+                                />
+                              </div>
+                              <div>
+                                <Label htmlFor="explanation" className="text-white">
+                                  الشرح
+                                </Label>
+                                <Textarea
+                                  id="explanation"
+                                  value={newQuestion.explanation}
+                                  onChange={(e) => setNewQuestion({ ...newQuestion, explanation: e.target.value })}
+                                  className="bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                  placeholder="أدخل شرح الإجابة"
+                                  rows={2}
+                                />
+                              </div>
+                              
+                              {/* Hints Management */}
+                              <div>
+                                <Label className="text-white">التلميحات</Label>
+                                <div className="space-y-2">
+                                  {/* Add new hint */}
+                                  <div className="flex gap-2">
+                                    <Input
+                                      id="hintInput"
+                                      placeholder="أدخل تلميح جديد"
+                                      className="flex-1 bg-gray-800/50 border-[#8648f9]/20 text-white"
+                                      onKeyPress={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault()
+                                          addHintToQuestion()
+                                        }
+                                      }}
+                                    />
+                                    <Button
+                                      onClick={addHintToQuestion}
+                                      size="sm"
+                                      className="bg-[#8648f9] hover:bg-[#8648f9]/80 text-white"
+                                    >
+                                      إضافة
+                                    </Button>
+                                  </div>
+                                  
+                                  {/* Display existing hints */}
+                                  {newQuestion.hints.length > 0 && (
+                                    <div className="space-y-2">
+                                      <p className="text-sm text-gray-400">التلميحات المضافة:</p>
+                                      {newQuestion.hints.map((hint, index) => (
+                                        <div key={index} className="flex items-center justify-between p-2 bg-gray-700/30 rounded">
+                                          <span className="text-white text-sm">{hint}</span>
+                                          <Button
+                                            onClick={() => removeHintFromQuestion(index)}
+                                            size="sm"
+                                            variant="outline"
+                                            className="border-red-500/20 text-red-500 hover:bg-red-500/10"
+                                          >
+                                            <X className="w-3 h-3" />
+                                          </Button>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              
+                              <div className="flex gap-2">
+                                <Button onClick={handleAddQuestion} className="flex-1 bg-[#8648f9] hover:bg-[#8648f9]/80 text-white">
+                                  إضافة السؤال
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  onClick={() => setQuestionDialogOpen(false)}
+                                  className="border-gray-500/20 text-gray-300"
+                                >
+                                  إلغاء
+                                </Button>
+                              </div>
+                            </div>
+                          </DialogContent>
+                        </Dialog>
+                      </div>
+                      
+                      <div className="bg-gray-800/30 rounded-lg p-4">
+                        {labQuestions.length === 0 ? (
+                          <p className="text-gray-400 text-center">لا توجد أسئلة في هذا المختبر</p>
+                        ) : (
+                          <div className="space-y-4">
+                            {labQuestions.map((question) => (
+                              <div key={question.id} className="p-4 bg-gray-700/30 rounded">
+                                <div className="flex justify-between items-start mb-3">
+                                  <h4 className="text-white font-medium text-lg">{question.question}</h4>
+                                  <div className="flex gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => setEditingQuestion(question)}
+                                      className="border-[#8648f9]/20 text-[#8648f9] hover:bg-[#8648f9]/10"
+                                    >
+                                      <Edit className="w-3 h-3" />
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleDeleteQuestion(question.id)}
+                                      className="border-red-500/20 text-red-500 hover:bg-red-500/10"
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </Button>
+                                  </div>
+                                </div>
+                                <div className="space-y-2 text-sm">
+                                  <div className="p-2 bg-green-500/10 border border-green-500/20 rounded">
+                                    <span className="text-green-400 font-medium">الإجابة الصحيحة:</span>
+                                    <p className="text-white mt-1">{question.correct_answer}</p>
+                                  </div>
+                                  {question.explanation && (
+                                    <div className="p-2 bg-blue-500/10 border border-blue-500/20 rounded">
+                                      <span className="text-blue-400 font-medium">الشرح:</span>
+                                      <p className="text-white mt-1">{question.explanation}</p>
+                                    </div>
+                                  )}
+                                  {question.hints && question.hints.length > 0 && (
+                                    <div className="p-2 bg-yellow-500/10 border border-yellow-500/20 rounded">
+                                      <span className="text-yellow-400 font-medium">التلميحات:</span>
+                                      <ul className="text-white mt-1 space-y-1">
+                                        {question.hints.map((hint, index) => (
+                                          <li key={index} className="flex items-start">
+                                            <span className="text-yellow-400 ml-2">•</span>
+                                            {hint.hint}
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </DialogContent>
+            </Dialog>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
