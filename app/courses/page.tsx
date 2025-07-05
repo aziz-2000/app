@@ -169,8 +169,35 @@ export default function CoursesPage() {
         throw error
       }
       
-      setCourses(data || [])
-      console.log('✅ Courses loaded:', data?.length || 0)
+              // جلب عدد المستخدمين مباشرة من جدول course_enrollments
+        if (data && data.length > 0) {
+          const coursesWithStudents = await Promise.all(
+            data.map(async (course) => {
+              try {
+                // جلب عدد المستخدمين المسجلين في هذا المسار من جدول course_enrollments
+                const { count: studentsCount, error: studentsError } = await supabase
+                  .from('course_enrollments')
+                  .select('*', { count: 'exact', head: true })
+                  .eq('course_id', course.id)
+                
+                if (studentsError) {
+                  console.error(`❌ Error fetching users count for course ${course.id}:`, studentsError)
+                  return { ...course, students: 0 }
+                }
+                
+                return { ...course, students: studentsCount || 0 }
+              } catch (err) {
+                console.error(`❌ Error processing course ${course.id}:`, err)
+                return { ...course, students: 0 }
+              }
+            })
+          )
+          
+          setCourses(coursesWithStudents)
+          console.log('✅ Courses with real users counts from course_enrollments:', coursesWithStudents)
+        } else {
+          setCourses(data || [])
+        }
       
       // إذا لم توجد مسارات، جرب جلب جميع المسارات
       if (!data || data.length === 0) {
@@ -181,8 +208,30 @@ export default function CoursesPage() {
         
         console.log('📚 All courses:', allCourses)
         if (allCourses && allCourses.length > 0) {
-          setCourses(allCourses)
-          console.log('✅ Using all courses instead of published only')
+                  // جلب عدد المستخدمين مباشرة من جدول course_enrollments لجميع المسارات
+        const allCoursesWithStudents = await Promise.all(
+          allCourses.map(async (course) => {
+            try {
+              const { count: studentsCount, error: studentsError } = await supabase
+                .from('course_enrollments')
+                .select('*', { count: 'exact', head: true })
+                .eq('course_id', course.id)
+              
+              if (studentsError) {
+                console.error(`❌ Error fetching users count for course ${course.id}:`, studentsError)
+                return { ...course, students: 0 }
+              }
+              
+              return { ...course, students: studentsCount || 0 }
+            } catch (err) {
+              console.error(`❌ Error processing course ${course.id}:`, err)
+              return { ...course, students: 0 }
+            }
+          })
+        )
+        
+        setCourses(allCoursesWithStudents)
+        console.log('✅ Using all courses with real users counts from course_enrollments')
         }
       }
 
@@ -285,6 +334,12 @@ export default function CoursesPage() {
       
       // تحديث قائمة التسجيلات
       await fetchUserEnrollments()
+
+      // تحديث عدد المستخدمين في المسار
+      const updatedCourses = courses.map(c => 
+        c.id === courseId ? { ...c, students: c.students + 1 } : c
+      )
+      setCourses(updatedCourses)
 
       toast({
         title: "تم التسجيل بنجاح",
@@ -490,11 +545,11 @@ export default function CoursesPage() {
                       <div className="flex items-center justify-between text-sm text-gray-400">
                         <div className="flex items-center">
                           <Clock className="w-4 h-4 ml-1" />
-                          {course.duration || "4 أسابيع"}
+                          {course.duration || "غير محدد"}
                         </div>
                         <div className="flex items-center">
                           <Users className="w-4 h-4 ml-1" />
-                          {course.students}
+                          {course.students} مستخدم
                         </div>
                       </div>
 
@@ -520,7 +575,7 @@ export default function CoursesPage() {
                           <span className="text-sm text-gray-300">{course.rating?.toString() || "4.8"}</span>
                         </div>
                         <span className="text-lg font-bold text-[#8648f9]">
-                          {!course.price || course.price === "0" ? "مجاني" : `${course.price} ر.ع`}
+                          {!course.price || course.price === "0" || parseFloat(course.price) === 0 ? "مجاني" : `${course.price} ر.ع`}
                         </span>
                       </div>
                     </div>

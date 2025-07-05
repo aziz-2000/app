@@ -24,6 +24,7 @@ import { getUsers, createUser, updateUser, deleteUser, User } from "./services/u
 import { getCourses, createCourse, updateCourse, deleteCourse, Course } from "./services/courses";
 import { getLessons, createLesson, updateLesson, deleteLesson, Lesson, createLessonWithMaterials, updateLessonWithMaterials, createLessonWithUrls, updateLessonWithUrls, getLessonMaterials } from "./services/lessons";
 import { getLabs, createLab, updateLab, deleteLab, Lab, getLabWithDetails } from "./services/labs";
+
 import {
   AlertDialog,
   AlertDialogAction,
@@ -86,11 +87,15 @@ export default function AdminDashboard() {
     description: string
     level: CourseLevel
     category: CourseCategory
+    duration: string
+    price: number
   }>({
     title: '',
     description: '',
     level: 'مبتدئ',
-    category: 'شبكات'
+    category: 'شبكات',
+    duration: '',
+    price: 0
   });
   const [editingCourse, setEditingCourse] = useState<Course | null>(null);
   const [newLab, setNewLab] = useState<{ title: string; description: string; instructions: string; course_id: number; difficulty: LabDifficulty }>({ title: "", description: "", instructions: "", course_id: 0, difficulty: "مبتدئ" });
@@ -107,8 +112,6 @@ export default function AdminDashboard() {
   const [editingLesson, setEditingLesson] = useState<Lesson | null>(null);
   const [courseImageFile, setCourseImageFile] = useState<File | null>(null);
   const [editingCourseImageFile, setEditingCourseImageFile] = useState<File | null>(null);
-  const [badgeImageFile, setBadgeImageFile] = useState<File | null>(null);
-  const [editingBadgeImageFile, setEditingBadgeImageFile] = useState<File | null>(null);
   
   // Badge state
   const [newBadge, setNewBadge] = useState<{ name: string; description: string }>({ name: "", description: "" });
@@ -271,9 +274,38 @@ export default function AdminDashboard() {
           getLabs()
         ]);
         setUsers(usersData);
-        setCourses(coursesData);
         setLessons(lessonsData);
         setLabs(labsData);
+        
+        // جلب عدد المستخدمين الحقيقي لكل مسار
+        if (coursesData && coursesData.length > 0) {
+          const supabase = createClientComponentClient();
+          const coursesWithStudents = await Promise.all(
+            coursesData.map(async (course) => {
+              try {
+                const { count: studentsCount, error: studentsError } = await supabase
+                  .from('course_enrollments')
+                  .select('*', { count: 'exact', head: true })
+                  .eq('course_id', course.id)
+                
+                if (studentsError) {
+                  console.error(`❌ Error fetching users count for course ${course.id}:`, studentsError)
+                  return { ...course, students: 0 }
+                }
+                
+                return { ...course, students: studentsCount || 0 }
+              } catch (err) {
+                console.error(`❌ Error processing course ${course.id}:`, err)
+                return { ...course, students: 0 }
+              }
+            })
+          )
+          
+          setCourses(coursesWithStudents);
+          console.log('✅ Admin dashboard: Courses with real users counts loaded:', coursesWithStudents);
+        } else {
+          setCourses(coursesData);
+        }
       } catch (error: any) {
         toast({ 
           title: "خطأ", 
@@ -488,8 +520,8 @@ export default function AdminDashboard() {
         category: newCourse.category,
         status: "منشور",
         students: 0,
-        price: 0,
-        duration: '',
+        price: newCourse.price,
+        duration: newCourse.duration,
         rating: 0,
         image: imageUrl
       })
@@ -568,8 +600,9 @@ export default function AdminDashboard() {
         })
       }
 
-      setCourses([...courses, course])
-      setNewCourse({ title: "", description: "", level: "مبتدئ", category: "شبكات" })
+      // إضافة المسار مع عدد المستخدمين الصحيح (0 للمسار الجديد)
+      setCourses([...courses, { ...course, students: 0 }])
+      setNewCourse({ title: "", description: "", level: "مبتدئ", category: "شبكات", duration: "", price: 0 })
       setCourseImageFile(null)
       setCourseDialogOpen(false)
     } catch (error: any) {
@@ -590,6 +623,34 @@ export default function AdminDashboard() {
         return '#8b5cf6' // purple
     }
   }
+
+  // دالة لتحديث عدد المستخدمين لمسار معين
+  const updateCourseStudentsCount = async (courseId: number) => {
+    try {
+      const supabase = createClientComponentClient();
+      const { count: studentsCount, error: studentsError } = await supabase
+        .from('course_enrollments')
+        .select('*', { count: 'exact', head: true })
+        .eq('course_id', courseId)
+      
+      if (studentsError) {
+        console.error(`❌ Error updating users count for course ${courseId}:`, studentsError)
+        return;
+      }
+      
+      setCourses(courses.map(c => 
+        c.id === courseId ? { ...c, students: studentsCount || 0 } : c
+      ));
+      
+      console.log(`✅ Updated users count for course ${courseId}: ${studentsCount || 0}`);
+    } catch (err) {
+      console.error(`❌ Error updating users count for course ${courseId}:`, err);
+    }
+  }
+
+
+
+
 
   const handleUpdateCourse = async () => {
     try {
@@ -636,8 +697,15 @@ export default function AdminDashboard() {
       }
       
       // Update course
-      const updated = await updateCourse(editingCourse.id, { ...editingCourse, image: imageUrl })
-      setCourses(courses.map(c => c.id === updated.id ? updated : c))
+      const updated = await updateCourse(editingCourse.id, { 
+        ...editingCourse, 
+        image: imageUrl,
+        duration: editingCourse.duration || '',
+        price: editingCourse.price || 0
+      })
+      // تحديث المسار مع الحفاظ على عدد المستخدمين الحقيقي
+      const currentCourse = courses.find(c => c.id === updated.id);
+      setCourses(courses.map(c => c.id === updated.id ? { ...updated, students: currentCourse?.students || 0 } : c))
       
       // Update or create badge
       try {
@@ -1334,9 +1402,11 @@ export default function AdminDashboard() {
                 <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
                 <BookOpen className="w-5 h-5 ml-2" /> إدارة المسارات
-                <Button size="sm" className="ml-auto" onClick={() => setCourseDialogOpen(true)}>
-                  <Plus className="w-4 h-4 ml-1" /> مسار جديد
-                        </Button>
+                <div className="ml-auto flex gap-2">
+                  <Button size="sm" onClick={() => setCourseDialogOpen(true)}>
+                    <Plus className="w-4 h-4 ml-1" /> مسار جديد
+                  </Button>
+                </div>
               </CardTitle>
               <CardDescription className="text-gray-300">إضافة وتعديل وحذف المسارات التعليمية</CardDescription>
                     </CardHeader>
@@ -1370,16 +1440,25 @@ export default function AdminDashboard() {
                         <CardDescription className="text-gray-300">{course.description}</CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <div className="flex items-center justify-between text-sm">
-                          <Badge variant="outline" className="border-blue-500/20 text-blue-500">
-                            {course.level}
-                          </Badge>
-                          <Badge variant="outline" className="border-green-500/20 text-green-500">
-                            {course.category}
-                          </Badge>
-                          <Badge variant={course.status === 'منشور' ? 'default' : 'outline'}>
-                            {course.status}
-                          </Badge>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-sm">
+                            <Badge variant="outline" className="border-blue-500/20 text-blue-500">
+                              {course.level}
+                            </Badge>
+                            <Badge variant="outline" className="border-green-500/20 text-green-500">
+                              {course.category}
+                            </Badge>
+                            <Badge variant={course.status === 'منشور' ? 'default' : 'outline'}>
+                              {course.status}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between text-sm text-gray-400">
+                            <span>المدة: {course.duration || 'غير محدد'}</span>
+                            <span>التكلفة: {!course.price || course.price === 0 ? 'مجاني' : `${course.price} ر.ع`}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-sm text-gray-400">
+                            <span>عدد المستخدمين: {course.students} مستخدم</span>
+                          </div>
                         </div>
                         {course.image && (
                           <div className="mt-3">
@@ -1940,20 +2019,38 @@ export default function AdminDashboard() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="أساسيات">أساسيات</SelectItem>
+                    <SelectItem value="شبكات">شبكات</SelectItem>
                     <SelectItem value="اختبار الاختراق">اختبار الاختراق</SelectItem>
+                    <SelectItem value="أنظمة التشغيل">أنظمة التشغيل</SelectItem>
+                    <SelectItem value="التحليل الجنائي">التحليل الجنائي</SelectItem>
                     <SelectItem value="الاستجابة للحوادث">الاستجابة للحوادث</SelectItem>
-                    <SelectItem value="أمان التطبيقات">أمان التطبيقات</SelectItem>
-                    <SelectItem value="قواعد البيانات">قواعد البيانات</SelectItem>
-                    <SelectItem value="أمان الشبكات">أمان الشبكات</SelectItem>
                     <SelectItem value="تحليل البرمجيات الخبيثة">تحليل البرمجيات الخبيثة</SelectItem>
-                    <SelectItem value="أمان السحابة">أمان السحابة</SelectItem>
-                    <SelectItem value="أمان الأجهزة المحمولة">أمان الأجهزة المحمولة</SelectItem>
-                    <SelectItem value="أمان إنترنت الأشياء">أمان إنترنت الأشياء</SelectItem>
-                    <SelectItem value="أمان البنية التحتية">أمان البنية التحتية</SelectItem>
-                    <SelectItem value="أمان الذكاء الاصطناعي">أمان الذكاء الاصطناعي</SelectItem>
+                    <SelectItem value="التشفير">التشفير</SelectItem>
                   </SelectContent>
                 </Select>
+                                      </div>
+                                      <div>
+                <Label htmlFor="courseDuration" className="text-white">مدة المسار</Label>
+                <Input
+                  id="courseDuration"
+                  placeholder="مثال: 10 ساعات، 5 أيام، 3 أسابيع"
+                  value={newCourse.duration}
+                  onChange={e => setNewCourse({ ...newCourse, duration: e.target.value })}
+                  className="bg-gray-800 border-gray-700 text-white"
+                />
+                                      </div>
+                                      <div>
+                <Label htmlFor="coursePrice" className="text-white">التكلفة</Label>
+                <Input
+                  id="coursePrice"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0 للمسار المجاني"
+                  value={newCourse.price}
+                  onChange={e => setNewCourse({ ...newCourse, price: parseFloat(e.target.value) || 0 })}
+                  className="bg-gray-800 border-gray-700 text-white"
+                />
                                       </div>
                                       <div>
                 <Label htmlFor="courseImage" className="text-white">صورة المسار (اختياري)</Label>
@@ -1964,25 +2061,6 @@ export default function AdminDashboard() {
                   onChange={e => setCourseImageFile(e.target.files?.[0] || null)}
                   className="bg-gray-800 border-gray-700 text-white"
                                           />
-                                        </div>
-                                        <div className="border-t border-gray-700 pt-4">
-                                          <h4 className="text-white font-medium mb-3">صورة شارة المسار (اختياري)</h4>
-                                          <p className="text-gray-400 text-sm mb-3">
-                                            سيتم إنشاء شارة تلقائياً للمسار مع هذه الصورة. عند إكمال المستخدم للمسار سيحصل على هذه الشارة.
-                                          </p>
-                                          <div>
-                                            <Label htmlFor="badgeImage" className="text-white">صورة الشارة</Label>
-                                            <Input
-                                              id="badgeImage"
-                                              type="file"
-                                              accept="image/*"
-                                              onChange={e => setBadgeImageFile(e.target.files?.[0] || null)}
-                                              className="bg-gray-800 border-gray-700 text-white"
-                                            />
-                                            <p className="text-xs text-gray-400 mt-1">
-                                              إذا لم ترفع صورة، سيتم إنشاء شارة بلون افتراضي حسب مستوى المسار
-                                            </p>
-                                          </div>
                                         </div>
                                           </div>
             <DialogFooter>
@@ -2526,20 +2604,38 @@ export default function AdminDashboard() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="أساسيات">أساسيات</SelectItem>
+                      <SelectItem value="شبكات">شبكات</SelectItem>
                       <SelectItem value="اختبار الاختراق">اختبار الاختراق</SelectItem>
+                      <SelectItem value="أنظمة التشغيل">أنظمة التشغيل</SelectItem>
+                      <SelectItem value="التحليل الجنائي">التحليل الجنائي</SelectItem>
                       <SelectItem value="الاستجابة للحوادث">الاستجابة للحوادث</SelectItem>
-                      <SelectItem value="أمان التطبيقات">أمان التطبيقات</SelectItem>
-                      <SelectItem value="قواعد البيانات">قواعد البيانات</SelectItem>
-                      <SelectItem value="أمان الشبكات">أمان الشبكات</SelectItem>
                       <SelectItem value="تحليل البرمجيات الخبيثة">تحليل البرمجيات الخبيثة</SelectItem>
-                      <SelectItem value="أمان السحابة">أمان السحابة</SelectItem>
-                      <SelectItem value="أمان الأجهزة المحمولة">أمان الأجهزة المحمولة</SelectItem>
-                      <SelectItem value="أمان إنترنت الأشياء">أمان إنترنت الأشياء</SelectItem>
-                      <SelectItem value="أمان البنية التحتية">أمان البنية التحتية</SelectItem>
-                      <SelectItem value="أمان الذكاء الاصطناعي">أمان الذكاء الاصطناعي</SelectItem>
+                      <SelectItem value="التشفير">التشفير</SelectItem>
                     </SelectContent>
                   </Select>
+                                          </div>
+                                          <div>
+                  <Label htmlFor="editCourseDuration" className="text-white">مدة المسار</Label>
+                  <Input
+                    id="editCourseDuration"
+                    placeholder="مثال: 10 ساعات، 5 أيام، 3 أسابيع"
+                    value={editingCourse.duration || ''}
+                    onChange={e => setEditingCourse({ ...editingCourse, duration: e.target.value })}
+                    className="bg-gray-800 border-gray-700 text-white"
+                  />
+                                          </div>
+                                          <div>
+                  <Label htmlFor="editCoursePrice" className="text-white">التكلفة</Label>
+                  <Input
+                    id="editCoursePrice"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0 للمسار المجاني"
+                    value={editingCourse.price || 0}
+                    onChange={e => setEditingCourse({ ...editingCourse, price: parseFloat(e.target.value) || 0 })}
+                    className="bg-gray-800 border-gray-700 text-white"
+                  />
                                           </div>
                                           <div>
                   <Label htmlFor="editCourseImage" className="text-white">صورة جديدة (اختياري)</Label>
@@ -2550,25 +2646,6 @@ export default function AdminDashboard() {
                     onChange={e => setEditingCourseImageFile(e.target.files?.[0] || null)}
                     className="bg-gray-800 border-gray-700 text-white"
                                             />
-                                          </div>
-                                          <div className="border-t border-gray-700 pt-4">
-                                            <h4 className="text-white font-medium mb-3">صورة شارة المسار (اختياري)</h4>
-                                            <p className="text-gray-400 text-sm mb-3">
-                                              سيتم تحديث شارة المسار بهذه الصورة. إذا لم ترفع صورة جديدة، سيتم الاحتفاظ بالصورة الحالية.
-                                            </p>
-                                            <div>
-                                              <Label htmlFor="editBadgeImage" className="text-white">صورة الشارة الجديدة</Label>
-                                              <Input
-                                                id="editBadgeImage"
-                                                type="file"
-                                                accept="image/*"
-                                                onChange={e => setEditingBadgeImageFile(e.target.files?.[0] || null)}
-                                                className="bg-gray-800 border-gray-700 text-white"
-                                              />
-                                              <p className="text-xs text-gray-400 mt-1">
-                                                إذا لم ترفع صورة جديدة، سيتم الاحتفاظ بالصورة الحالية للشارة
-                                              </p>
-                                            </div>
                                           </div>
                                           </div>
               <DialogFooter>

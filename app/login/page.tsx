@@ -9,7 +9,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Eye, EyeOff, Mail, Lock, User, Phone } from "lucide-react"
 import Link from "next/link"
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
-import { Dialog, DialogTrigger, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog"
 import { useRouter } from "next/navigation"
 
 export default function LoginPage() {
@@ -26,10 +25,6 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [errorMsg, setErrorMsg] = useState("")
   const [successMsg, setSuccessMsg] = useState("")
-  const [resetDialogOpen, setResetDialogOpen] = useState(false)
-  const [resetEmail, setResetEmail] = useState("")
-  const [resetLoading, setResetLoading] = useState(false)
-  const [resetMsg, setResetMsg] = useState("")
   const router = useRouter()
 
   useEffect(() => {
@@ -49,18 +44,23 @@ export default function LoginPage() {
     
     try {
       const supabase = createClientComponentClient()
-    const { error } = await supabase.auth.signInWithPassword({
-      email: loginEmail,
-      password: loginPassword,
-    })
+      const { error, data } = await supabase.auth.signInWithPassword({
+        email: loginEmail,
+        password: loginPassword,
+      })
       
-    if (error) {
-      setErrorMsg(error.message || "فشل تسجيل الدخول")
-    } else {
-      setSuccessMsg("تم تسجيل الدخول بنجاح!")
-      setTimeout(() => {
-        router.push('/dashboard')
-      }, 1500)
+      if (error) {
+        setErrorMsg(error.message || "فشل تسجيل الدخول")
+      } else {
+        // تحقق من تأكيد البريد الإلكتروني
+        if (data.user && !data.user.email_confirmed_at) {
+          setErrorMsg("يرجى تأكيد بريدك الإلكتروني قبل تسجيل الدخول. تحقق من بريدك الإلكتروني للحصول على رابط التأكيد.")
+        } else {
+          setSuccessMsg("تم تسجيل الدخول بنجاح!")
+          setTimeout(() => {
+            router.push('/dashboard')
+          }, 1500)
+        }
       }
     } catch (error) {
       console.error('Login error:', error)
@@ -84,25 +84,32 @@ export default function LoginPage() {
     
     try {
       const supabase = createClientComponentClient()
-    const { error } = await supabase.auth.signUp({
-      email: registerEmail,
-      password: registerPassword,
-      options: {
-        data: {
-          first_name: firstName,
-          last_name: lastName,
-          phone,
+      const { error, data } = await supabase.auth.signUp({
+        email: registerEmail,
+        password: registerPassword,
+        options: {
+          data: {
+            first_name: firstName,
+            last_name: lastName,
+            phone,
+          },
+          emailRedirectTo: `${window.location.origin}/dashboard`,
         },
-      },
-    })
+      })
       
-    if (error) {
-      setErrorMsg(error.message || "فشل إنشاء الحساب")
-    } else {
-      setSuccessMsg("تم إنشاء الحساب بنجاح! تحقق من بريدك الإلكتروني.")
-      setTimeout(() => {
-        router.push('/dashboard')
-      }, 2000)
+      if (error) {
+        setErrorMsg(error.message || "فشل إنشاء الحساب")
+      } else {
+        // تحقق من أن المستخدم يحتاج إلى تأكيد البريد الإلكتروني
+        if (data.user && !data.user.email_confirmed_at) {
+          setSuccessMsg("تم إنشاء الحساب بنجاح! يرجى التحقق من بريدك الإلكتروني وتفعيل حسابك قبل تسجيل الدخول.")
+          // لا تنتقل إلى لوحة التحكم حتى يتم تأكيد البريد الإلكتروني
+        } else {
+          setSuccessMsg("تم إنشاء الحساب بنجاح!")
+          setTimeout(() => {
+            router.push('/dashboard')
+          }, 2000)
+        }
       }
     } catch (error) {
       console.error('Register error:', error)
@@ -112,27 +119,7 @@ export default function LoginPage() {
     }
   }
 
-  const handleResetPassword = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setResetLoading(true)
-    setResetMsg("")
-    
-    try {
-      const supabase = createClientComponentClient()
-    const { error } = await supabase.auth.resetPasswordForEmail(resetEmail)
-      
-    if (error) {
-      setResetMsg(error.message || "فشل إرسال رابط إعادة التعيين")
-    } else {
-      setResetMsg("تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني إذا كان مسجلاً.")
-      }
-    } catch (error) {
-      console.error('Reset password error:', error)
-      setResetMsg("حدث خطأ أثناء إرسال رابط إعادة التعيين")
-    } finally {
-      setResetLoading(false)
-    }
-  }
+
 
   return (
     <div className="min-h-screen bg-black flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
@@ -178,7 +165,7 @@ export default function LoginPage() {
                 )}
                 <form onSubmit={handleLogin} className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="email" className="text-white">
+                    <Label htmlFor="email" className="text-white text-right">
                       البريد الإلكتروني
                     </Label>
                     <div className="relative">
@@ -187,7 +174,7 @@ export default function LoginPage() {
                         id="email"
                         type="email"
                         placeholder="أدخل بريدك الإلكتروني"
-                        className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400"
+                        className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400 text-right"
                         value={loginEmail}
                         onChange={(e) => setLoginEmail(e.target.value)}
                         required
@@ -196,7 +183,7 @@ export default function LoginPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="password" className="text-white">
+                    <Label htmlFor="password" className="text-white text-right">
                       كلمة المرور
                     </Label>
                     <div className="relative">
@@ -205,7 +192,7 @@ export default function LoginPage() {
                         id="password"
                         type={showPassword ? "text" : "password"}
                         placeholder="أدخل كلمة المرور"
-                        className="pr-10 pl-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400"
+                        className="pr-10 pl-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400 text-right"
                         value={loginPassword}
                         onChange={(e) => setLoginPassword(e.target.value)}
                         required
@@ -222,41 +209,18 @@ export default function LoginPage() {
 
                   <div className="flex items-center justify-between">
                     <div className="flex items-center">
+                      <Label htmlFor="remember" className="mr-2 text-sm text-gray-300 text-right">
+                        تذكرني
+                      </Label>
                       <input
                         id="remember"
                         type="checkbox"
                         className="h-4 w-4 text-[#8648f9] focus:ring-[#8648f9] border-gray-300 rounded"
                       />
-                      <Label htmlFor="remember" className="mr-2 text-sm text-gray-300">
-                        تذكرني
-                      </Label>
                     </div>
-                    <Dialog open={resetDialogOpen} onOpenChange={setResetDialogOpen}>
-                      <DialogTrigger asChild>
-                        <button type="button" className="text-sm text-[#8648f9] hover:text-[#8648f9]/80">نسيت كلمة المرور؟</button>
-                      </DialogTrigger>
-                      <DialogContent className="bg-gray-900 border-[#8648f9]/20">
-                        <DialogHeader>
-                          <DialogTitle className="text-white">إعادة تعيين كلمة المرور</DialogTitle>
-                          <DialogDescription className="text-gray-300">أدخل بريدك الإلكتروني لإرسال رابط إعادة تعيين كلمة المرور</DialogDescription>
-                        </DialogHeader>
-                        <form onSubmit={handleResetPassword} className="space-y-4 mt-2">
-                          <Input
-                            id="resetEmail"
-                            type="email"
-                            placeholder="أدخل بريدك الإلكتروني"
-                            className="bg-gray-800 border-gray-700 text-white"
-                            value={resetEmail}
-                            onChange={e => setResetEmail(e.target.value)}
-                            required
-                          />
-                          <Button type="submit" className="w-full bg-[#8648f9] hover:bg-[#8648f9]/80 text-white" disabled={resetLoading}>
-                            {resetLoading ? "جاري الإرسال..." : "إرسال رابط إعادة التعيين"}
-                          </Button>
-                          {resetMsg && <div className="text-center text-sm mt-2 text-white">{resetMsg}</div>}
-                        </form>
-                      </DialogContent>
-                    </Dialog>
+                    <Link href="/forgot-password" className="text-sm text-[#8648f9] hover:text-[#8648f9]/80">
+                      نسيت كلمة المرور؟
+                    </Link>
                   </div>
 
                   <Button type="submit" className="w-full bg-[#8648f9] hover:bg-[#8648f9]/80 text-white" disabled={isLoading}>
@@ -266,7 +230,17 @@ export default function LoginPage() {
 
                 <div className="text-center">
                   <p className="text-sm text-gray-300">
-                    ليس لديك حساب؟ <button className="text-[#8648f9] hover:text-[#8648f9]/80">أنشئ حساباً جديداً</button>
+                    ليس لديك حساب؟ <button 
+                      onClick={() => {
+                        const registerTab = document.querySelector('[data-value="register"]') as HTMLElement;
+                        if (registerTab) {
+                          registerTab.click();
+                        }
+                      }} 
+                      className="text-[#8648f9] hover:text-[#8648f9]/80 cursor-pointer"
+                    >
+                      أنشئ حساباً جديداً
+                    </button>
                   </p>
                 </div>
               </CardContent>
@@ -294,16 +268,16 @@ export default function LoginPage() {
                 <form onSubmit={handleRegister} className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="firstName" className="text-white">
-                        الاسم الأول
-                      </Label>
+                                          <Label htmlFor="firstName" className="text-white text-right">
+                      الاسم الأول
+                    </Label>
                       <div className="relative">
                         <User className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
                         <Input
                           id="firstName"
                           type="text"
                           placeholder="الاسم الأول"
-                          className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400"
+                          className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400 text-right"
                           value={firstName}
                           onChange={(e) => setFirstName(e.target.value)}
                           required
@@ -311,7 +285,7 @@ export default function LoginPage() {
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="lastName" className="text-white">
+                      <Label htmlFor="lastName" className="text-white text-right">
                         الاسم الأخير
                       </Label>
                       <div className="relative">
@@ -320,7 +294,7 @@ export default function LoginPage() {
                           id="lastName"
                           type="text"
                           placeholder="الاسم الأخير"
-                          className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400"
+                          className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400 text-right"
                           value={lastName}
                           onChange={(e) => setLastName(e.target.value)}
                           required
@@ -330,7 +304,7 @@ export default function LoginPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="registerEmail" className="text-white">
+                    <Label htmlFor="registerEmail" className="text-white text-right">
                       البريد الإلكتروني
                     </Label>
                     <div className="relative">
@@ -339,7 +313,7 @@ export default function LoginPage() {
                         id="registerEmail"
                         type="email"
                         placeholder="أدخل بريدك الإلكتروني"
-                        className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400"
+                        className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400 text-right"
                         value={registerEmail}
                         onChange={(e) => setRegisterEmail(e.target.value)}
                         required
@@ -348,7 +322,7 @@ export default function LoginPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="phone" className="text-white">
+                    <Label htmlFor="phone" className="text-white text-right">
                       رقم الهاتف
                     </Label>
                     <div className="relative">
@@ -357,7 +331,7 @@ export default function LoginPage() {
                         id="phone"
                         type="tel"
                         placeholder="أدخل رقم هاتفك"
-                        className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400"
+                        className="pr-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400 text-right"
                         value={phone}
                         onChange={(e) => setPhone(e.target.value)}
                         required
@@ -366,7 +340,7 @@ export default function LoginPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="registerPassword" className="text-white">
+                    <Label htmlFor="registerPassword" className="text-white text-right">
                       كلمة المرور
                     </Label>
                     <div className="relative">
@@ -375,7 +349,7 @@ export default function LoginPage() {
                         id="registerPassword"
                         type={showPassword ? "text" : "password"}
                         placeholder="أدخل كلمة المرور"
-                        className="pr-10 pl-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400"
+                        className="pr-10 pl-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400 text-right"
                         value={registerPassword}
                         onChange={(e) => setRegisterPassword(e.target.value)}
                         required
@@ -392,7 +366,7 @@ export default function LoginPage() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="confirmPassword" className="text-white">
+                    <Label htmlFor="confirmPassword" className="text-white text-right">
                       تأكيد كلمة المرور
                     </Label>
                     <div className="relative">
@@ -401,7 +375,7 @@ export default function LoginPage() {
                         id="confirmPassword"
                         type={showConfirmPassword ? "text" : "password"}
                         placeholder="أعد إدخال كلمة المرور"
-                        className="pr-10 pl-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400"
+                        className="pr-10 pl-10 bg-gray-800/50 border-[#8648f9]/20 text-white placeholder:text-gray-400 text-right"
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
                         required
@@ -417,19 +391,19 @@ export default function LoginPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center">
-                    <input
-                      id="terms"
-                      type="checkbox"
-                      className="h-4 w-4 text-[#8648f9] focus:ring-[#8648f9] border-gray-300 rounded"
-                      required
-                    />
-                    <Label htmlFor="terms" className="mr-2 text-sm text-gray-300">
+                  <div className="flex items-center justify-end">
+                    <Label htmlFor="terms" className="text-sm text-gray-300 text-right">
                       أوافق على{" "}
-                      <Link href="#" className="text-[#8648f9] hover:text-[#8648f9]/80">
+                      <Link href="/terms" className="text-[#8648f9] hover:text-[#8648f9]/80" target="_blank">
                         الشروط والأحكام
                       </Link>
                     </Label>
+                    <input
+                      id="terms"
+                      type="checkbox"
+                      className="h-4 w-4 text-[#8648f9] focus:ring-[#8648f9] border-gray-300 rounded mr-2"
+                      required
+                    />
                   </div>
 
                   <Button type="submit" className="w-full bg-[#8648f9] hover:bg-[#8648f9]/80 text-white" disabled={isLoading}>
@@ -439,7 +413,17 @@ export default function LoginPage() {
 
                 <div className="text-center">
                   <p className="text-sm text-gray-300">
-                    لديك حساب بالفعل؟ <button className="text-[#8648f9] hover:text-[#8648f9]/80">سجل دخولك</button>
+                    لديك حساب بالفعل؟ <button 
+                      onClick={() => {
+                        const loginTab = document.querySelector('[data-value="login"]') as HTMLElement;
+                        if (loginTab) {
+                          loginTab.click();
+                        }
+                      }} 
+                      className="text-[#8648f9] hover:text-[#8648f9]/80 cursor-pointer"
+                    >
+                      سجل دخولك
+                    </button>
                   </p>
                 </div>
               </CardContent>

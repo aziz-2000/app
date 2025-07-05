@@ -51,12 +51,20 @@ export function UserAvatar() {
     const fetchUserProfile = async () => {
       try {
         setProfileLoading(true)
-        const { profile } = await getUserProfile()
+        const { profile, error } = await getUserProfile()
+        
+        if (error) {
+          console.error('Error fetching user profile:', error)
+          // لا نريد أن نعرض خطأ للمستخدم هنا، فقط نستخدم البيانات المتاحة
+        }
+        
         setUserProfile(profile)
         profileFetchedRef.current = true
         userIdRef.current = user.id
       } catch (error) {
-        console.error('Error fetching user profile:', error)
+        console.error('Unexpected error fetching user profile:', error)
+        // في حالة الخطأ غير المتوقع، نستخدم بيانات المستخدم الأساسية
+        setUserProfile(null)
       } finally {
         setProfileLoading(false)
       }

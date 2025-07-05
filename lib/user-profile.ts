@@ -44,8 +44,11 @@ export async function getUserProfile(): Promise<{ profile: UserProfile | null, e
     const { data: { user }, error: userError } = await supabase.auth.getUser()
     
     if (userError || !user) {
+      console.log('No user found or user error:', userError)
       return { profile: null, error: 'يجب تسجيل الدخول أولاً' }
     }
+
+    console.log('Fetching profile for user:', user.id)
 
     // جلب بيانات المستخدم من جدول users
     const { data: profile, error: profileError } = await supabase
@@ -55,10 +58,31 @@ export async function getUserProfile(): Promise<{ profile: UserProfile | null, e
       .single()
 
     if (profileError) {
-      console.error('Error fetching user profile:', profileError)
+      console.error('Error fetching user profile from database:', profileError)
+      
+      // إذا كان الخطأ يشير إلى أن المستخدم غير موجود في جدول users
+      if (profileError.code === 'PGRST116') {
+        console.log('User not found in users table, creating profile...')
+        
+        // إنشاء ملف شخصي افتراضي للمستخدم
+        const defaultProfile: UserProfile = {
+          id: user.id,
+          full_name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'مستخدم',
+          email: user.email || '',
+          role: 'طالب',
+          status: 'نشط',
+          join_date: new Date().toISOString().split('T')[0],
+          avatar_url: user.user_metadata?.avatar_url || user.user_metadata?.picture,
+          created_at: user.created_at || new Date().toISOString()
+        }
+        
+        return { profile: defaultProfile, error: null }
+      }
+      
       return { profile: null, error: 'فشل في جلب بيانات الملف الشخصي' }
     }
 
+    console.log('Profile fetched successfully:', profile)
     return { profile, error: null }
   } catch (error) {
     console.error('Error in getUserProfile:', error)

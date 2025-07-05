@@ -298,7 +298,7 @@ export async function enrollInCourse(courseId: number): Promise<{ success: boole
 
     console.log('✅ Enrollment created successfully:', newEnrollment)
 
-    // تحديث عدد الطلاب في المسار
+    // تحديث عدد المستخدمين في المسار
     const { data: currentCourse } = await supabase
       .from('courses')
       .select('students')
@@ -307,7 +307,7 @@ export async function enrollInCourse(courseId: number): Promise<{ success: boole
 
     if (currentCourse) {
       const newStudentsCount = (currentCourse.students || 0) + 1
-      console.log('📊 Updating course students count from', currentCourse.students, 'to', newStudentsCount)
+      console.log('📊 Updating course users count from', currentCourse.students, 'to', newStudentsCount)
       
       const { error: updateError } = await supabase
         .from('courses')
@@ -315,10 +315,10 @@ export async function enrollInCourse(courseId: number): Promise<{ success: boole
         .eq('id', courseId)
 
       if (updateError) {
-        console.error('❌ Error updating course students count:', updateError)
+        console.error('❌ Error updating course users count:', updateError)
         // لا نريد أن يفشل التسجيل بسبب خطأ في تحديث العداد
       } else {
-        console.log('✅ Course students count updated successfully')
+        console.log('✅ Course users count updated successfully')
       }
     }
 
@@ -852,4 +852,6 @@ export async function getCompletedCourses(): Promise<{
     console.error('❌ Error in getCompletedCourses:', error)
     return { completedCourses: [], error: "حدث خطأ غير متوقع" }
   }
-} 
+}
+
+ 
