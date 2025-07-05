@@ -9,6 +9,10 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  output: 'standalone',
+  poweredByHeader: false,
+  compress: true,
+  reactStrictMode: true,
   experimental: {
     optimizePackageImports: ['@supabase/supabase-js'],
     scrollRestoration: false,

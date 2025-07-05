@@ -1,11 +1,9 @@
 import React, { useState, useRef, useLayoutEffect, useEffect } from "react";
 import {
-  Globe, Router, Network, Server, HardDrive, Laptop, Wifi
+  Globe, Router, Network, Server, HardDrive, Laptop, Wifi, Terminal
 } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { useState as useCopyState } from "react";
-import { FaWindows, FaApple, FaLinux } from 'react-icons/fa';
 
 export interface NetworkDevice {
   id: string;
@@ -35,19 +33,13 @@ export interface NetworkDiagramProps {
   onDeviceClick?: (device: NetworkDevice) => void;
   width?: number | string;
   height?: number | string;
-  onStartLab?: () => void;
-  onStopLab?: () => void;
-  onResetLab?: () => void;
-  onConnectVPN?: () => void;
-  timer?: number;
-  vpnConnected?: boolean;
+  onConnectWebshell?: (deviceId?: string) => void;
   labStatus?: 'active' | 'inactive' | 'stopped' | 'starting' | 'running';
   onDeviceMove?: (deviceId: string, x: number, y: number) => void;
   onConnectionDelete?: (connectionId: string) => void;
   onConnectionCreate?: (sourceId: string, targetId: string, type: string) => void;
   onConnectionToggle?: (connectionId: string) => void;
   readOnly?: boolean;
-  sessionTimeRemaining?: number;
   hasActiveSession?: boolean;
 }
 
@@ -59,28 +51,20 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
   onDeviceClick,
   width = "100%",
   height = 500,
-  onStartLab,
-  onStopLab,
-  onResetLab,
-  onConnectVPN,
-  timer,
-  vpnConnected,
+  onConnectWebshell,
   labStatus = 'active',
   onDeviceMove,
   onConnectionDelete,
   onConnectionCreate,
   onConnectionToggle,
   readOnly,
-  sessionTimeRemaining,
   hasActiveSession,
 }) => {
   const [devices, setDevices] = useState<NetworkDevice[]>(initialDevices);
   const [draggedDeviceId, setDraggedDeviceId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null);
   const [selectedDevice, setSelectedDevice] = useState<NetworkDevice | null>(null);
-  const [showVpnDialog, setShowVpnDialog] = useState(false);
-  const [copied, setCopied] = useCopyState(false);
-  const [selectedOs, setSelectedOs] = useState<'windows' | 'mac' | 'linux'>('windows');
+
 
   // === Dynamic Diagram Size ===
   const containerRef = useRef<HTMLDivElement>(null);
@@ -192,52 +176,19 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
       {/* شريط أزرار التحكم */}
       <div className="flex flex-wrap items-center gap-2 p-3 border-b border-gray-700 bg-gray-800/80 z-20 relative">
         <button
-          className={`px-3 py-1 rounded bg-transparent border-2 ${labStatus === 'running' ? 'border-green-600 text-green-600' : 'border-[#8648f9] text-[#8648f9]'} hover:bg-[#8648f9]/10 disabled:opacity-50 transition`}
-          onClick={onStartLab}
-          disabled={!onStartLab || labStatus === 'running' || !hasActiveSession}
-        >بدء المختبر</button>
-        <button
-          className={`px-3 py-1 rounded bg-transparent border-2 ${labStatus === 'stopped' ? 'border-red-600 text-red-600' : 'border-gray-500 text-gray-300'} hover:bg-gray-700/10 disabled:opacity-50 transition`}
-          onClick={onStopLab}
-          disabled={!onStopLab || labStatus !== 'running'}
-        >إيقاف المختبر</button>
-        <button
-          className="px-3 py-1 rounded bg-transparent border-2 border-[#a78bfa] text-[#a78bfa] hover:bg-[#a78bfa]/10 disabled:opacity-50 transition" 
-          onClick={onResetLab} 
-          disabled={!onResetLab || !hasActiveSession}
-        >تمديد الجلسة</button>
-        <button
-          className={`px-3 py-1 rounded bg-transparent border-2 ${vpnConnected ? 'border-green-500 text-green-500' : 'border-[#06b6d4] text-[#06b6d4]'} hover:bg-[#06b6d4]/10 disabled:opacity-50 transition`}
-          onClick={() => setShowVpnDialog(true)}
-          disabled={!onConnectVPN}
+          className="px-3 py-1 rounded bg-transparent border-2 border-[#10b981] text-[#10b981] hover:bg-[#10b981]/10 transition"
+          onClick={() => onConnectWebshell?.()}
+          disabled={!onConnectWebshell || !hasActiveSession}
         >
-          {vpnConnected ? 'قطع VPN' : 'اتصال VPN'}
+          <Terminal className="w-4 h-4 ml-1 inline" />
+          فتح WebShell
         </button>
         
-        {/* عرض الوقت */}
-        <div className="flex items-center gap-4 ml-4">
-          <span className="text-white">وقت المختبر: {formatTime(timer)}</span>
-          {hasActiveSession && sessionTimeRemaining !== undefined && (
-            <span className={`text-sm font-mono ${
-              sessionTimeRemaining < 300000 ? 'text-red-400' : 
-              sessionTimeRemaining < 600000 ? 'text-yellow-400' : 'text-green-400'
-            }`}>
-              جلسة: {formatSessionTimeRemaining(sessionTimeRemaining)}
-            </span>
-          )}
+        <div className="flex items-center gap-2 text-white text-sm">
+          <span className={`px-2 py-1 rounded ${labStatus === 'running' ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>
+            {labStatus === 'running' ? 'نشط' : 'غير نشط'}
+          </span>
         </div>
-        
-        {(() => {
-          const anyOnline = devices.some(d => d.status === 'online');
-          return (
-            <span className="flex items-center gap-1 text-sm ml-4">
-              <span className={`inline-block w-3 h-3 rounded-full ${anyOnline ? 'bg-green-500' : 'bg-red-500'}`}></span>
-              <span className={anyOnline ? 'text-green-400' : 'text-red-400'}>
-                {anyOnline ? 'متصل' : 'غير متصل'}
-              </span>
-            </span>
-          );
-        })()}
       </div>
       {/* Connection Lines */}
       <svg className="absolute inset-0 w-full h-full pointer-events-none" width="100%" height="100%">
@@ -385,93 +336,7 @@ const NetworkDiagram: React.FC<NetworkDiagramProps> = ({
           )}
         </DialogContent>
       </Dialog>
-      {/* نافذة تعليمات VPN */}
-      <Dialog open={showVpnDialog} onOpenChange={setShowVpnDialog}>
-        <DialogContent className="bg-gray-900 border border-gray-700 max-w-2xl py-2">
-          <DialogTitle className="text-lg font-bold text-white mb-2 text-center">الاتصال عبر VPN <span className="text-xs text-gray-400"></span></DialogTitle>
-          <div className="mb-2 flex items-center gap-2">
-            <span className="inline-block w-3 h-3 rounded-full bg-red-500"></span>
-            <span className="text-red-400 font-semibold text-sm">غير متصل</span>
-          </div>
-          <div className="text-gray-300 text-sm mb-4">
-            يتيح لك الاتصال عبر VPN الوصول إلى الأجهزة مباشرة باستخدام عناوين IP الخاصة. هذا الخيار اختياري، يمكنك أيضاً استخدام مخطط الشبكة التفاعلي.
-          </div>
-          {(() => {
-            const OS_LIST: Array<'windows'|'mac'|'linux'> = ['windows','mac','linux'];
-            return (
-              <div className="mb-3 flex flex-row gap-4 justify-center">
-                {OS_LIST.map((os) => (
-                  <button
-                    key={os}
-                    className={`flex flex-col items-center justify-center px-4 py-3 rounded-lg border-2 transition-all duration-200 cursor-pointer w-32
-                      ${selectedOs === os ? 'border-[#a78bfa] bg-[#232136]' : 'border-gray-700 bg-gray-800 hover:border-[#a78bfa]'}`}
-                    onClick={() => setSelectedOs(os)}
-                  >
-                    {os === 'windows' && <FaWindows className="w-8 h-8 text-blue-400 mb-2" />}
-                    {os === 'mac' && <FaApple className="w-8 h-8 text-gray-200 mb-2" />}
-                    {os === 'linux' && <FaLinux className="w-8 h-8 text-yellow-400 mb-2" />}
-                    <span className="font-bold text-white text-sm">
-                      {os === 'windows' ? 'Windows' : os === 'mac' ? 'macOS' : 'Linux'}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            );
-          })()}
-          {/* نص التعليمات حسب النظام */}
-          {selectedOs === 'windows' && (
-            <div className="bg-gray-800 rounded-lg p-4 mb-2 text-gray-200 text-sm">
-              <ol className="list-decimal list-inside ml-4">
-                <li>قم بتثبيت برنامج OpenVPN.</li>
-                <li>بعد التثبيت، انقر مرتين على ملف OVPN الذي تم تنزيله للاتصال.</li>
-              </ol>
-            </div>
-          )}
-          {selectedOs === 'mac' && (
-            <div className="bg-gray-800 rounded-lg p-4 mb-2 text-gray-200 text-sm">
-              <ol className="list-decimal list-inside ml-4">
-                <li>قم بتثبيت OpenVPN Connect لنظام macOS.</li>
-                <li>أو قم بتثبيت Tunnelblick لنظام macOS.</li>
-                <li>افتح ملف OVPN الذي تم تنزيله للاتصال.</li>
-              </ol>
-            </div>
-          )}
-          {selectedOs === 'linux' && (
-            <div className="bg-gray-800 rounded-lg p-4 mb-2 text-gray-200 text-sm">
-              <ol className="list-decimal list-inside ml-4">
-                <li>افتح الطرفية ونفذ الأمر التالي:</li>
-                <li className="flex items-center gap-2 mt-2">
-                  <span className="bg-gray-900 px-2 py-1 rounded text-green-400 select-all" id="vpn-cmd">sudo openvpn --config /path/to/vpn/file.ovpn</span>
-                  <button
-                    className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs text-white border border-gray-600"
-                    onClick={() => {
-                      navigator.clipboard.writeText('sudo openvpn --config /path/to/vpn/file.ovpn');
-                      setCopied(true);
-                      setTimeout(() => setCopied(false), 1200);
-                    }}
-                  >
-                    {copied ? 'تم النسخ' : 'نسخ'}
-                  </button>
-                </li>
-              </ol>
-            </div>
-          )}
-          <div className="mt-2 ">
-            <div className="font-bold mb-1 text-blue-400" >ملاحظات هامة:</div>
-            <ol className="list-decimal list-inside space-y-1 text-sm">
-              <li>تأكد أن نطاق عناوين شبكة الواي فاي لديك لا يتعارض مع نطاق عناوين الأجهزة في المختبر. التعارض قد يمنع الاتصال الصحيح.</li>
-              <li>لكل شبكة ملف VPN مختلف. يرجى فصل أي اتصال VPN آخر نشط قبل الاتصال بهذا المختبر.</li>
-            </ol>
-          </div>
-          <a
-            href={VPN_FILE_URL}
-            download
-            className="block w-full mt-6 px-4 py-2 rounded bg-[#a78bfa] hover:bg-[#c4b5fd] text-white text-center font-semibold transition"
-          >
-            تنزيل ملف VPN
-          </a>
-        </DialogContent>
-      </Dialog>
+
     </div>
   );
 };

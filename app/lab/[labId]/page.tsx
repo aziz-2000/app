@@ -243,9 +243,7 @@ export default function LabPage({ params }: { params: Promise<{ labId: string }>
   const [error, setError] = useState<string | null>(null)
 
   // Lab state
-  const [labStatus, setLabStatus] = useState<"stopped" | "starting" | "running">("stopped")
-  const [timer, setTimer] = useState(0)
-  const [vpnConnected, setVpnConnected] = useState(false)
+  const [labStatus, setLabStatus] = useState<"stopped" | "starting" | "running">("running")
   const [selectedDevice, setSelectedDevice] = useState<NetworkDevice | null>(null)
 
   // Questions state
@@ -268,9 +266,7 @@ export default function LabPage({ params }: { params: Promise<{ labId: string }>
   // New state for current session with proper typing
   const [currentSession, setCurrentSession] = useState<LabSession | null>(null)
 
-  // New state for session timer
-  const [sessionTimeRemaining, setSessionTimeRemaining] = useState<number>(0)
-  const [sessionTimerActive, setSessionTimerActive] = useState(false)
+
 
   // Fetch lab data
   useEffect(() => {
@@ -415,16 +411,7 @@ export default function LabPage({ params }: { params: Promise<{ labId: string }>
     getLabId()
   }, [params])
 
-  // Timer effect
-  useEffect(() => {
-    let interval: NodeJS.Timeout
-    if (labStatus === "running") {
-      interval = setInterval(() => {
-        setTimer((prev) => prev + 1)
-      }, 1000)
-    }
-    return () => clearInterval(interval)
-  }, [labStatus])
+
 
   // جلب المستخدم الحالي ودوره
   useEffect(() => {
@@ -456,9 +443,8 @@ export default function LabPage({ params }: { params: Promise<{ labId: string }>
         const session = data.sessions[0];
         setCurrentSession(session);
         
-        // إذا كانت الجلسة نشطة، ابدأ العداد
+        // إذا كانت الجلسة نشطة، تفعيل الأجهزة
         if (session.status === 'running') {
-          setSessionTimerActive(true);
           setLabStatus('running');
           // تفعيل الأجهزة
           setDevices((prev) =>
@@ -491,213 +477,61 @@ export default function LabPage({ params }: { params: Promise<{ labId: string }>
     startLabSession();
   }, [labId, currentUser]);
 
-  // Timer effect for session countdown
-  useEffect(() => {
-    let interval: NodeJS.Timeout
-    if (sessionTimerActive && currentSession) {
-      interval = setInterval(() => {
-        const now = new Date().getTime()
-        const expires = new Date(currentSession.expires_at).getTime()
-        const remaining = Math.max(0, expires - now)
-        setSessionTimeRemaining(remaining)
-        
-        // إذا انتهت الجلسة، إيقاف العداد
-        if (remaining <= 0) {
-          setSessionTimerActive(false)
-          setCurrentSession(null)
-          setLabStatus('stopped')
-          
-          // إيقاف الأجهزة والاتصالات
-          setDevices((prev) =>
-            prev.map((device) => ({
-              ...device,
-              status: "offline",
-            })),
-          )
-          setConnections((prev) =>
-            prev.map((connection) => ({
-              ...connection,
-              status: "disconnected",
-            })),
-          )
-          
-          toast({
-            title: "انتهت الجلسة",
-            description: "انتهت مدة جلسة المختبر. تم إيقاف جميع الأجهزة.",
-            variant: "destructive"
-          })
-          
-          // إشعار صوتي (اختياري)
-          if ('Notification' in window && Notification.permission === 'granted') {
-            new Notification('انتهت جلسة المختبر', {
-              body: 'انتهت مدة جلسة المختبر. تم إيقاف جميع الأجهزة.',
-              icon: '/favicon.png'
-            });
-          }
-        }
-        
-        // تحذير قبل 5 دقائق من انتهاء الجلسة
-        if (remaining === 300000) { // 5 دقائق
-          toast({
-            title: "تحذير",
-            description: "ستنتهي جلسة المختبر خلال 5 دقائق",
-            variant: "destructive"
-          })
-        }
-      }, 1000)
-    }
-    return () => clearInterval(interval)
-  }, [sessionTimerActive, currentSession])
 
-  const formatTime = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    const secs = seconds % 60
-    return `${hours}h ${minutes}m ${secs}s`
-  }
 
-  const startLab = async () => {
-    if (!currentSession) {
+  const connectWebshell = async (deviceId?: string) => {
+    try {
+      // 1. تحقق من وجود جلسة نشطة
+      let sessionRes = await fetch(`/api/lab-sessions?labId=${labId}`);
+      let sessionsData = await sessionRes.json();
+      let session = sessionsData.sessions && sessionsData.sessions[0];
+
+      // 2. إذا لم توجد جلسة نشطة، أنشئ واحدة
+      if (!session) {
+        const createRes = await fetch('/api/lab-sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ labId: Number(labId) }),
+        });
+        const createData = await createRes.json();
+        session = createData.session;
+        if (!session) {
+          toast({
+            title: "خطأ",
+            description: createData.error || "تعذر إنشاء جلسة مختبر",
+            variant: "destructive"
+          });
+          return;
+        }
+      }
+
+      // 3. الآن أرسل طلب إلى /api/webshell
+      const response = await fetch('/api/webshell', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ labId: Number(labId), deviceId })
+      });
+      const data = await response.json();
+      if (data.success) {
+        window.open(data.webshellUrl, '_blank');
+        toast({
+          title: "تم فتح WebShell",
+          description: "تم فتح جلسة WebShell بنجاح",
+        });
+      } else {
+        toast({
+          title: "خطأ",
+          description: data.error || "فشل في فتح WebShell",
+          variant: "destructive"
+        });
+      }
+    } catch (error) {
       toast({
         title: "خطأ",
-        description: "لا توجد جلسة نشطة للمختبر",
+        description: "فشل في الاتصال بـ WebShell",
         variant: "destructive"
-      })
-      return
-    }
-
-    // طلب إذن الإشعارات
-    if ('Notification' in window && Notification.permission === 'default') {
-      await Notification.requestPermission();
-    }
-
-    setLabStatus("starting")
-    
-    // بدء عداد الجلسة
-    setSessionTimerActive(true)
-    
-    // تحديث حالة الجلسة في الخادم
-    try {
-      await fetch(`/api/lab-sessions/${currentSession.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'start' })
       });
-    } catch (error) {
-      console.error('Error updating session status:', error);
     }
-    
-    setTimeout(() => {
-      setLabStatus("running")
-      setDevices((prev) =>
-        prev.map((device) => ({
-          ...device,
-          status: "online",
-        })),
-      )
-      // تفعيل جميع الاتصالات
-      setConnections((prev) =>
-        prev.map((connection) => ({
-          ...connection,
-          status: "connected",
-        })),
-      )
-    }, 3000)
-  }
-
-  const stopLab = async () => {
-    if (currentSession) {
-      try {
-        // إيقاف الجلسة في الخادم
-        const res = await fetch(`/api/lab-sessions/${currentSession.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'stop' })
-        })
-        
-        if (res.ok) {
-          setCurrentSession(null)
-          setSessionTimerActive(false)
-          toast({
-            title: "تم إيقاف الجلسة",
-            description: "تم إيقاف جلسة المختبر بنجاح",
-          })
-        }
-      } catch (error) {
-        toast({
-          title: "خطأ",
-          description: "فشل في إيقاف الجلسة",
-          variant: "destructive"
-        })
-      }
-    }
-
-    setLabStatus("stopped")
-    setTimer(0)
-    setVpnConnected(false)
-    setDevices((prev) =>
-      prev.map((device) => ({
-        ...device,
-        status: "offline",
-      })),
-    )
-    // إيقاف جميع الاتصالات
-    setConnections((prev) =>
-      prev.map((connection) => ({
-        ...connection,
-        status: "disconnected",
-      })),
-    )
-  }
-
-  const resetLab = async () => {
-    if (currentSession) {
-      try {
-        // تمديد الجلسة
-        const res = await fetch(`/api/lab-sessions/${currentSession.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'extend', hours: 1 })
-        })
-        
-        if (res.ok) {
-          // تحديث الجلسة المحلية
-          const updatedSession = { ...currentSession }
-          updatedSession.expires_at = new Date(new Date(currentSession.expires_at).getTime() + 60 * 60 * 1000).toISOString()
-          setCurrentSession(updatedSession)
-          
-          toast({
-            title: "تم تمديد الجلسة",
-            description: "تم تمديد الجلسة لمدة ساعة إضافية",
-          })
-        }
-      } catch (error) {
-        toast({
-          title: "خطأ",
-          description: "فشل في تمديد الجلسة",
-          variant: "destructive"
-        })
-      }
-    }
-
-    setTimer(0)
-    setDevices((prev) =>
-      prev.map((device) => ({
-        ...device,
-        status: labStatus === "running" ? "online" : "offline",
-      })),
-    )
-    // إعادة تعيين حالة الاتصالات
-    setConnections((prev) =>
-      prev.map((connection) => ({
-        ...connection,
-        status: labStatus === "running" ? "connected" : "disconnected",
-      })),
-    )
-  }
-
-  const connectVPN = () => {
-    setVpnConnected(!vpnConnected)
   }
 
   const connectToDevice = (device: NetworkDevice) => {
@@ -724,25 +558,7 @@ export default function LabPage({ params }: { params: Promise<{ labId: string }>
     }
   }
 
-  const getDeviceInfo = (device: NetworkDevice) => {
-    return {
-      name: device.name,
-      ip: device.ip,
-      status: device.status,
-      type: device.type,
-      uptime: labStatus === "running" ? formatTime(timer) : "0h 0m 0s",
-      services:
-        device.type === "server"
-          ? ["HTTP", "SSH", "FTP"]
-          : device.type === "router"
-            ? ["DHCP", "NAT"]
-            : device.type === "database"
-              ? ["MySQL", "SSH"]
-              : device.type === "wifi"
-                ? ["802.11ac", "WPA3"]
-                : [],
-    }
-  }
+
 
   // وظائف السحب والإفلات للمستخدم
   const handleDeviceDragStart = (e: React.DragEvent, device: NetworkDevice) => {
@@ -983,16 +799,7 @@ export default function LabPage({ params }: { params: Promise<{ labId: string }>
     }
   };
 
-  // دالة تنسيق الوقت المتبقي
-  const formatTimeRemaining = (milliseconds: number): string => {
-    if (milliseconds <= 0) return "00:00:00"
-    
-    const hours = Math.floor(milliseconds / (1000 * 60 * 60))
-    const minutes = Math.floor((milliseconds % (1000 * 60 * 60)) / (1000 * 60))
-    const seconds = Math.floor((milliseconds % (1000 * 60)) / 1000)
-    
-    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
-  }
+
 
   return (
     <div className="min-h-screen bg-black">
@@ -1217,13 +1024,7 @@ export default function LabPage({ params }: { params: Promise<{ labId: string }>
                       onConnectionDelete={handleConnectionDelete}
                       readOnly={false}
                       labStatus={labStatus}
-                      onStartLab={startLab}
-                      onStopLab={stopLab}
-                      onResetLab={resetLab}
-                      onConnectVPN={connectVPN}
-                      timer={timer}
-                      vpnConnected={vpnConnected}
-                      sessionTimeRemaining={sessionTimeRemaining}
+                      onConnectWebshell={connectWebshell}
                       hasActiveSession={!!currentSession}
                     />
                   </div>
